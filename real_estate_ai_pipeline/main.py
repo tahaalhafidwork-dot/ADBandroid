@@ -103,9 +103,10 @@ def run_pipeline(
             else:
                 post["_extraction"] = {
                     "skipped": True,
-                    "reason": "Extraction failed in combined call",
+                    "reason": f"Extraction failed in combined call (status={result.get('status')})",
                     "confidence": 0.0,
-                    "parse_error": result.get("parse_error"),
+                    "status": result.get("status"),
+                    "conflict_note": result.get("conflict_note"),
                     "finish_reason": result.get("finish_reason"),
                     "truncated": result.get("truncated"),
                 }
@@ -164,12 +165,15 @@ def run_pipeline(
         extraction = post.get("_extraction", {})
 
         # Collect diagnostics
-        if extraction.get("parse_error"):
+        status = extraction.get("status")
+        if status and status != "ok":
             parse_errors.append({
                 "index": post.get("index"),
                 "url": post.get("url"),
                 "category": cat,
-                "error": extraction.get("parse_error"),
+                "error": status,
+                "reason": extraction.get("reason", ""),
+                "conflict_note": extraction.get("conflict_note"),
                 "finish_reason": extraction.get("finish_reason"),
                 "truncated": extraction.get("truncated"),
             })
@@ -180,6 +184,7 @@ def run_pipeline(
                 "url": post.get("url"),
                 "category": cat,
                 "finish_reason": extraction.get("finish_reason"),
+                "status": status,
             })
 
         if extraction.get("skipped"):
@@ -190,7 +195,7 @@ def run_pipeline(
                 "category": cat,
                 "reason": extraction.get("reason", ""),
                 "text": post.get("text", "")[:200],
-                "parse_error": extraction.get("parse_error"),
+                "status": status,
                 "finish_reason": extraction.get("finish_reason"),
             })
             continue
@@ -199,6 +204,7 @@ def run_pipeline(
         listing = {
             "source": extraction.get("source"),
             "source_url": extraction.get("source_url"),
+            "text": post.get("text", ""),
             "listing_type": extraction.get("listing_type"),
             "property_type": extraction.get("property_type"),
             "title": extraction.get("title"),
@@ -219,7 +225,8 @@ def run_pipeline(
             "_provider": extraction.get("provider"),
             "_classification_confidence": post.get("_classification", {}).get("confidence"),
             "_classification_reasoning": post.get("_classification", {}).get("reasoning"),
-            "_parse_error": extraction.get("parse_error"),
+            "_status": extraction.get("status"),
+            "_conflict_note": extraction.get("conflict_note"),
             "_finish_reason": extraction.get("finish_reason"),
             "_truncated": extraction.get("truncated"),
             "_method": extraction.get("method", method),

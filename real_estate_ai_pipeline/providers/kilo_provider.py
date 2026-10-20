@@ -28,7 +28,6 @@ from prompts import (
     get_combined_prompt,
     get_extract_prompt,
     format_schema,
-    format_few_shot_examples,
     LISTING_SCHEMA,
 )
 from .base import ModelProvider
@@ -120,6 +119,72 @@ def _attempt_json_repair(text: str) -> Optional[Dict[str, Any]]:
         return json.loads(repaired)
     except (json.JSONDecodeError, ValueError):
         return None
+
+
+def _parse_and_repair_json(
+    raw_content: Optional[str]
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Parse JSON from model response with single repair attempt.
+
+    Returns (parsed_dict_or_None, error_message_or_None).
+    """
+    if not raw_content:
+        return None, "Empty response from model"
+
+    # Extract JSON from text (handle markdown fences)
+    json_text = _extract_json_from_text(raw_content)
+
+    # First attempt: direct parse
+    try:
+        return json.loads(json_text), None
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Second attempt: single repair
+    repaired = _attempt_json_repair(json_text)
+    if repaired is not None:
+        return repaired, None
+
+    return None, f"Failed to parse JSON after repair attempt. Raw: {raw_content[:200]}"
+
+
+def _resolve_category_key(
+    parsed: Dict[str, Any],
+) -> Tuple[str, Optional[str]]:
+    """Resolve the classification category from parsed JSON.
+
+    Supports both "category" and "listing_type" keys. "listing_type" is the
+    canonical schema key; "category" is accepted for backward compatibility.
+
+    Returns (category_value, conflict_note_or_None).
+    - If only one key present: use it.
+    - If both present and equal: use that value.
+    - If both present and different: use listing_type, note the conflict.
+    - If neither present: "unclear".
+    """
+    valid_categories = {
+        "for_sale",
+        "for_rent",
+        "buy_or_rent_request",
+        "real_estate_service",
+        "not_real_estate",
+        "unclear",
+    }
+    category_val = parsed.get("category")
+    listing_type_val = parsed.get("listing_type")
+
+    category_val = category_val if category_val in valid_categories else None
+    listing_type_val = listing_type_val if listing_type_val in valid_categories else None
+
+    if category_val is not None and listing_type_val is not None:
+        if category_val == listing_type_val:
+            return category_val, None
+        return listing_type_val, f"category={category_val}, listing_type={listing_type_val}"
+    if listing_type_val is not None:
+        return listing_type_val, None
+    if category_val is not None:
+        return category_val, None
+    return "unclear", None
 
 
 class KiloProvider(ModelProvider):
@@ -237,32 +302,6 @@ class KiloProvider(ModelProvider):
 
         return result
 
-    def _parse_and_repair_json(
-        self, raw_content: Optional[str]
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """Parse JSON from model response with single repair attempt.
-
-        Returns (parsed_dict_or_None, error_message_or_None).
-        """
-        if not raw_content:
-            return None, "Empty response from model"
-
-        # Extract JSON from text (handle markdown fences)
-        json_text = _extract_json_from_text(raw_content)
-
-        # First attempt: direct parse
-        try:
-            return json.loads(json_text), None
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        # Second attempt: single repair
-        repaired = _attempt_json_repair(json_text)
-        if repaired is not None:
-            return repaired, None
-
-        return None, f"Failed to parse JSON after repair attempt. Raw: {raw_content[:200]}"
-
     def _track_usage(self, response: Dict[str, Any]) -> None:
         """Usage tracking is done in _chat directly."""
         pass
@@ -333,7 +372,7 @@ class KiloProvider(ModelProvider):
                 [{"role": "user", "content": prompt}], max_tokens=256
             )
             content = response["choices"][0]["message"]["content"]
-            parsed, parse_error = self._parse_and_repair_json(content)
+            parsed, parse_error = _parse_and_repair_json(content)
 
             if parsed is None:
                 return {
@@ -394,7 +433,7 @@ class KiloProvider(ModelProvider):
                 [{"role": "user", "content": prompt}], max_tokens=1024
             )
             content = response["choices"][0]["message"]["content"]
-            parsed, parse_error = self._parse_and_repair_json(content)
+            parsed, parse_error = _parse_and_repair_json(content)
 
             if parsed is None:
                 return {
@@ -443,13 +482,26 @@ class KiloProvider(ModelProvider):
     # ------------------------------------------------------------------
 
     def classify_and_extract(self, text: str) -> Dict[str, Any]:
-        """Classify and extract in a single API call (Method B)."""
+        """Classify and extract in a single API call (Method B).
+
+        Returns a dict with keys:
+            - category: resolved classification category
+            - confidence: float 0.0-1.0
+            - reasoning: model reasoning (may be empty)
+            - status: one of "ok", "model_unclear", "parse_error", "truncated",
+                      "schema_error", "api_error"
+            - conflict_note: None or description of category/listing_type conflict
+            - finish_reason: API finish_reason
+            - truncated: whether response was truncated
+            - extraction: extraction dict or None
+        """
         if not self.is_available():
             return {
                 "category": "unclear",
                 "confidence": 0.0,
                 "reasoning": "Kilo AI Gateway not available",
-                "parse_error": None,
+                "status": "api_error",
+                "conflict_note": None,
                 "finish_reason": None,
                 "truncated": False,
                 "extraction": None,
@@ -460,36 +512,44 @@ class KiloProvider(ModelProvider):
 
         try:
             response = self._chat(
-                [{"role": "user", "content": prompt}], max_tokens=1024
+                [{"role": "user", "content": prompt}], max_tokens=2048
             )
             content = response["choices"][0]["message"]["content"]
-            parsed, parse_error = self._parse_and_repair_json(content)
+            truncated = self.last_response_truncated
+            finish_reason = self.last_finish_reason
+
+            # If truncated, do not attempt JSON repair — report as truncated
+            if truncated:
+                return {
+                    "category": "unclear",
+                    "confidence": 0.0,
+                    "reasoning": "Response truncated before complete JSON",
+                    "status": "truncated",
+                    "conflict_note": None,
+                    "finish_reason": finish_reason,
+                    "truncated": True,
+                    "extraction": None,
+                }
+
+            parsed, parse_error = _parse_and_repair_json(content)
 
             if parsed is None:
                 return {
                     "category": "unclear",
                     "confidence": 0.0,
                     "reasoning": f"Parse error: {parse_error}",
-                    "parse_error": parse_error,
-                    "finish_reason": self.last_finish_reason,
-                    "truncated": self.last_response_truncated,
+                    "status": "parse_error",
+                    "conflict_note": None,
+                    "finish_reason": finish_reason,
+                    "truncated": False,
                     "extraction": None,
                 }
 
-            category = parsed.get("category", "unclear")
-            valid_categories = [
-                "for_sale",
-                "for_rent",
-                "buy_or_rent_request",
-                "real_estate_service",
-                "not_real_estate",
-                "unclear",
-            ]
-            if category not in valid_categories:
-                category = "unclear"
+            # Resolve category from either "category" or "listing_type" key
+            category, conflict_note = _resolve_category_key(parsed)
 
             extraction: Dict[str, Any] = {
-                "listing_type": parsed.get("listing_type") or category,
+                "listing_type": category,
                 "property_type": parsed.get("property_type"),
                 "title": parsed.get("title"),
                 "description": parsed.get("description"),
@@ -506,18 +566,20 @@ class KiloProvider(ModelProvider):
                 "contact_phones": parsed.get("contact_phones") or [],
                 "published_at": parsed.get("published_at"),
                 "confidence": _safe_float(parsed.get("confidence", 0.0)),
-                "parse_error": None,
-                "finish_reason": self.last_finish_reason,
-                "truncated": self.last_response_truncated,
+                "status": "ok",
+                "conflict_note": conflict_note,
+                "finish_reason": finish_reason,
+                "truncated": truncated,
             }
 
             return {
                 "category": category,
                 "confidence": _safe_float(parsed.get("confidence", 0.0)),
                 "reasoning": parsed.get("reasoning", ""),
-                "parse_error": None,
-                "finish_reason": self.last_finish_reason,
-                "truncated": self.last_response_truncated,
+                "status": "ok",
+                "conflict_note": conflict_note,
+                "finish_reason": finish_reason,
+                "truncated": truncated,
                 "extraction": extraction,
             }
         except Exception as exc:  # noqa: BLE001
@@ -525,7 +587,8 @@ class KiloProvider(ModelProvider):
                 "category": "unclear",
                 "confidence": 0.0,
                 "reasoning": f"Model call failed: {exc}",
-                "parse_error": str(exc),
+                "status": "api_error",
+                "conflict_note": None,
                 "finish_reason": self.last_finish_reason,
                 "truncated": self.last_response_truncated,
                 "extraction": None,
