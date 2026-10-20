@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Real Estate Listing Schema",
+  "description": "Schema for structured real estate listing data extracted from Facebook group posts",
+  "type": "object",
+  "required": ["source", "listing_type"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": ["facebook_group"],
+      "description": "Source of the listing data"
+    },
+    "source_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Original Facebook post URL"
+    },
+    "listing_type": {
+      "type": "string",
+      "enum": ["for_sale", "for_rent", "buy_or_rent_request", "real_estate_service", "not_real_estate", "unclear"],
+      "description": "Type of listing"
+    },
+    "property_type": {
+      "type": ["string", "null"],
+      "description": "Type of property (house, apartment, land, villa, etc.)"
+    },
+    "title": {
+      "type": ["string", "null"],
+      "description": "Professional listing title without invented information"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Listing description from the original post"
+    },
+    "city": {
+      "type": ["string", "null"],
+      "description": "City name"
+    },
+    "district": {
+      "type": ["string", "null"],
+      "description": "District or neighborhood name"
+    },
+    "complex_name": {
+      "type": ["string", "null"],
+      "description": "Residential complex name"
+    },
+    "area_sqm": {
+      "type": ["integer", "null"],
+      "description": "Property area in square meters"
+    },
+    "bedrooms": {
+      "type": ["integer", "null"],
+      "description": "Number of bedrooms"
+    },
+    "bathrooms": {
+      "type": ["integer", "null"],
+      "description": "Number of bathrooms"
+    },
+    "floor": {
+      "type": ["string", "null"],
+      "description": "Floor number or level"
+    },
+    "furnished": {
+      "type": ["boolean", "null"],
+      "description": "Whether the property is furnished"
+    },
+    "price": {
+      "type": ["number", "null"],
+      "description": "Price value (not converted, original currency)"
+    },
+    "currency": {
+      "type": ["string", "null"],
+      "description": "Currency code (IQD, USD, etc.)"
+    },
+    "contact_phones": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[+]?[0-9\\s\\-]+$"
+      },
+      "description": "Contact phone numbers extracted locally"
+    },
+    "published_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Post publication timestamp"
+    },
+    "confidence": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Extraction confidence score (0.0 to 1.0)"
+    }
+  },
+  "additionalProperties": false
+}
