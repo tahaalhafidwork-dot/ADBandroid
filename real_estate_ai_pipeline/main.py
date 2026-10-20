@@ -1,8 +1,9 @@
-"""Main entry point for the real estate AI pipeline.
+"""Main entry point for the real estate AI pipeline with prompt engineering improvements.
 
 Usage:
+    python main.py --input apify_facebook_groups_results.json --provider kilo --method A
+    python main.py --input apify_facebook_groups_results.json --provider kilo --method B
     python main.py --input apify_facebook_groups_results.json --provider local
-    python main.py --input apify_facebook_groups_results.json --provider kilo
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, List
 
 # Add pipeline directory to path
@@ -52,33 +54,101 @@ def get_provider(provider_name: str) -> Any:
 
 
 def run_pipeline(
-    posts: List[Dict[str, Any]], provider_name: str = "local"
+    posts: List[Dict[str, Any]],
+    provider_name: str = "local",
+    method: str = "A",
 ) -> Dict[str, Any]:
     """Run the full pipeline on a list of posts.
 
+    Args:
+        posts: List of Facebook post dicts.
+        provider_name: "local" or "kilo".
+        method: "A" (classify then extract) or "B" (combined single call).
+
     Returns a dict with structured_listings, rejected_posts, duplicates,
-    and pipeline statistics including cost tracking.
+    and pipeline statistics including cost tracking and diagnostics.
     """
     provider = get_provider(provider_name)
     print(f"Using provider: {provider.provider_name}")
+    print(f"Method: {method}")
     print(f"Provider available: {provider.is_available()}")
+
+    start_time = time.time()
 
     # Step 1: Classify all posts
     print("\n[1/5] Classifying posts...")
-    classifier = PostClassifier(provider)
-    classified = classifier.classify_posts(posts)
+    classifier_start = time.time()
 
-    # Count categories
-    category_counts: Dict[str, int] = {}
-    for post in classified:
-        cat = post.get("_classification", {}).get("category", "unknown")
-        category_counts[cat] = category_counts.get(cat, 0) + 1
-    print(f"  Classification results: {category_counts}")
+    if method == "B" and hasattr(provider, "classify_and_extract"):
+        # Method B: Combined classify + extract in one call
+        classified_and_extracted = []
+        for post in posts:
+            result = provider.classify_and_extract(post.get("text", ""))
+            post["_classification"] = {
+                "category": result.get("category", "unclear"),
+                "confidence": result.get("confidence", 0.0),
+                "reasoning": result.get("reasoning", ""),
+                "parse_error": result.get("parse_error"),
+                "finish_reason": result.get("finish_reason"),
+                "truncated": result.get("truncated"),
+                "provider": provider.provider_name,
+                "method": "B",
+            }
+            if result.get("extraction"):
+                post["_extraction"] = result["extraction"]
+                post["_extraction"]["method"] = "B"
+                post["_extraction"]["source"] = "facebook_group"
+                post["_extraction"]["source_url"] = post.get("url")
+                post["_extraction"]["published_at"] = post.get("time")
+            else:
+                post["_extraction"] = {
+                    "skipped": True,
+                    "reason": "Extraction failed in combined call",
+                    "confidence": 0.0,
+                    "parse_error": result.get("parse_error"),
+                    "finish_reason": result.get("finish_reason"),
+                    "truncated": result.get("truncated"),
+                }
+            classified_and_extracted.append(post)
 
-    # Step 2: Extract fields from sale/rent posts
-    print("\n[2/5] Extracting structured fields...")
-    extractor = ListingExtractor(provider)
-    extracted = extractor.extract_posts(classified)
+        classified = classified_and_extracted
+        classifier_time = time.time() - classifier_start
+
+        # Count categories
+        category_counts: Dict[str, int] = {}
+        for post in classified:
+            cat = post.get("_classification", {}).get("category", "unknown")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        print(f"  Classification results: {category_counts}")
+        print(f"  Time: {classifier_time:.2f}s")
+
+        # Skip to step 3 (normalization)
+        print("\n[2/5] Extracting structured fields...")
+        print("  Skipped (combined with classification in Method B)")
+        extractor_time = 0.0
+        extracted = classified
+
+    else:
+        # Method A: Classify then extract (two separate calls)
+        classifier = PostClassifier(provider)
+        classified = classifier.classify_posts(posts)
+        classifier_time = time.time() - classifier_start
+
+        # Count categories
+        category_counts: Dict[str, int] = {}
+        for post in classified:
+            cat = post.get("_classification", {}).get("category", "unknown")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        print(f"  Classification results: {category_counts}")
+        print(f"  Time: {classifier_time:.2f}s")
+
+        # Step 2: Extract fields from sale/rent posts
+        print("\n[2/5] Extracting structured fields...")
+        extractor_start = time.time()
+        extractor = ListingExtractor(provider)
+        extracted = extractor.extract_posts(classified)
+        extractor_time = time.time() - extractor_start
+        print(f"  Time: {extractor_time:.2f}s")
 
     # Step 3: Normalize extracted fields
     print("\n[3/5] Normalizing fields...")
@@ -86,10 +156,31 @@ def run_pipeline(
 
     structured_listings: List[Dict[str, Any]] = []
     rejected_posts: List[Dict[str, Any]] = []
+    parse_errors: List[Dict[str, Any]] = []
+    truncated_responses: List[Dict[str, Any]] = []
 
     for post in extracted:
         cat = post.get("_classification", {}).get("category", "unclear")
         extraction = post.get("_extraction", {})
+
+        # Collect diagnostics
+        if extraction.get("parse_error"):
+            parse_errors.append({
+                "index": post.get("index"),
+                "url": post.get("url"),
+                "category": cat,
+                "error": extraction.get("parse_error"),
+                "finish_reason": extraction.get("finish_reason"),
+                "truncated": extraction.get("truncated"),
+            })
+
+        if extraction.get("truncated"):
+            truncated_responses.append({
+                "index": post.get("index"),
+                "url": post.get("url"),
+                "category": cat,
+                "finish_reason": extraction.get("finish_reason"),
+            })
 
         if extraction.get("skipped"):
             # Not a sale/rent listing - add to rejected
@@ -99,6 +190,8 @@ def run_pipeline(
                 "category": cat,
                 "reason": extraction.get("reason", ""),
                 "text": post.get("text", "")[:200],
+                "parse_error": extraction.get("parse_error"),
+                "finish_reason": extraction.get("finish_reason"),
             })
             continue
 
@@ -126,6 +219,10 @@ def run_pipeline(
             "_provider": extraction.get("provider"),
             "_classification_confidence": post.get("_classification", {}).get("confidence"),
             "_classification_reasoning": post.get("_classification", {}).get("reasoning"),
+            "_parse_error": extraction.get("parse_error"),
+            "_finish_reason": extraction.get("finish_reason"),
+            "_truncated": extraction.get("truncated"),
+            "_method": extraction.get("method", method),
         }
         structured_listings.append(listing)
 
@@ -134,9 +231,12 @@ def run_pipeline(
 
     # Step 4: Deduplication
     print("\n[4/5] Deduplicating...")
-    dedup = Deduplicator(similarity_threshold=0.80)
+    dedup_start = time.time()
+    dedup = Deduplicator(similarity_threshold=0.75)
     unique_listings, duplicate_listings = dedup.find_duplicates(structured_listings)
+    dedup_time = time.time() - dedup_start
     print(f"  Unique: {len(unique_listings)}, Duplicates: {len(duplicate_listings)}")
+    print(f"  Time: {dedup_time:.2f}s")
 
     # Step 5: Build output
     print("\n[5/5] Building output...")
@@ -168,9 +268,17 @@ def run_pipeline(
                 file=sys.stderr,
             )
 
+    # Response diagnostics
+    diagnostics = {}
+    if hasattr(provider, "get_response_diagnostics"):
+        diagnostics = provider.get_response_diagnostics()
+
+    total_time = time.time() - start_time
+
     stats = {
         "total_posts": len(posts),
         "provider": provider.provider_name,
+        "method": method,
         "provider_available": provider.is_available(),
         "category_counts": category_counts,
         "sale_count": category_counts.get("for_sale", 0),
@@ -190,6 +298,15 @@ def run_pipeline(
         },
         "cost_summary": cost_summary,
         "cost_cap_usd": COST_CAP_USD,
+        "diagnostics": diagnostics,
+        "parse_errors": parse_errors,
+        "truncated_responses": truncated_responses,
+        "timing": {
+            "total_seconds": round(total_time, 2),
+            "classifier_seconds": round(classifier_time, 2),
+            "extractor_seconds": round(extractor_time, 2) if method == "A" else 0.0,
+            "dedup_seconds": round(dedup_time, 2),
+        },
     }
 
     return {
@@ -213,10 +330,22 @@ def save_outputs(result: Dict[str, Any], output_dir: str) -> None:
     with open(os.path.join(output_dir, "duplicates.json"), "w", encoding="utf-8") as f:
         json.dump(result["duplicates"], f, ensure_ascii=False, indent=2)
 
+    # Save diagnostics separately
+    diagnostics = {
+        "parse_errors": result["stats"].get("parse_errors", []),
+        "truncated_responses": result["stats"].get("truncated_responses", []),
+        "cost_summary": result["stats"].get("cost_summary", {}),
+        "response_diagnostics": result["stats"].get("diagnostics", {}),
+        "timing": result["stats"].get("timing", {}),
+    }
+    with open(os.path.join(output_dir, "diagnostics.json"), "w", encoding="utf-8") as f:
+        json.dump(diagnostics, f, ensure_ascii=False, indent=2)
+
     print(f"\nOutputs saved to {output_dir}/")
     print(f"  - structured_listings.json ({len(result['structured_listings'])} listings)")
     print(f"  - rejected_posts.json ({len(result['rejected_posts'])} posts)")
     print(f"  - duplicates.json ({len(result['duplicates'])} duplicates)")
+    print(f"  - diagnostics.json (parse errors, truncation, cost, timing)")
 
 
 def main() -> None:
@@ -233,6 +362,12 @@ def main() -> None:
         choices=["local", "kilo"],
         default="local",
         help="Model provider to use (default: local)",
+    )
+    parser.add_argument(
+        "--method",
+        choices=["A", "B"],
+        default="A",
+        help="Extraction method: A=classify then extract, B=combined single call (default: A)",
     )
     parser.add_argument(
         "--output-dir",
@@ -254,14 +389,21 @@ def main() -> None:
     posts = load_posts(input_path)
     print(f"Loaded {len(posts)} posts")
 
-    result = run_pipeline(posts, provider_name=args.provider)
+    result = run_pipeline(posts, provider_name=args.provider, method=args.method)
 
     print("\n" + "=" * 60)
     print("PIPELINE STATISTICS")
     print("=" * 60)
     stats = result["stats"]
     for key, value in stats.items():
-        if key not in ("field_completion_rate", "cost_summary"):
+        if key not in (
+            "field_completion_rate",
+            "cost_summary",
+            "diagnostics",
+            "parse_errors",
+            "truncated_responses",
+            "timing",
+        ):
             print(f"  {key}: {value}")
 
     if stats.get("cost_summary"):
@@ -276,9 +418,26 @@ def main() -> None:
         print(f"    Estimated cost: ${cs.get('estimated_cost_usd', 0):.6f}")
         print(f"    Cost cap: ${stats.get('cost_cap_usd')}")
 
+    if stats.get("diagnostics"):
+        d = stats["diagnostics"]
+        print("\n  RESPONSE DIAGNOSTICS:")
+        print(f"    Finish reason: {d.get('finish_reason')}")
+        print(f"    Truncated: {d.get('truncated')}")
+        print(f"    Raw content length: {d.get('raw_content_length')}")
+
+    print("\n  PARSE ERRORS:", len(stats.get("parse_errors", [])))
+    for pe in stats.get("parse_errors", [])[:5]:
+        print(f"    - Post {pe.get('index')}: {pe.get('error', '')[:100]}")
+
+    print("\n  TRUNCATED RESPONSES:", len(stats.get("truncated_responses", [])))
+
     print("\n  Field completion rates:")
     for field, rate in stats.get("field_completion_rate", {}).items():
         print(f"    {field}: {rate}")
+
+    print("\n  TIMING:")
+    for key, value in stats.get("timing", {}).items():
+        print(f"    {key}: {value}s")
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), args.output_dir)
     save_outputs(result, output_dir)

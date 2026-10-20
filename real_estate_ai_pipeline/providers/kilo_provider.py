@@ -1,15 +1,19 @@
-"""Kilo AI Gateway model provider.
+"""Kilo AI Gateway model provider with prompt engineering improvements.
 
 Calls the Kilo AI Gateway cloud API at https://api.kilo.ai/api/gateway
 using the KILO_API_KEY environment variable for authentication.
 
-Configuration is read from environment variables:
-    KILO_GATEWAY_BASE_URL   -> base URL of the Kilo AI Gateway (default: https://api.kilo.ai/api/gateway)
-    KILO_API_KEY            -> authentication bearer token (required)
-    KILO_GATEWAY_MODEL      -> model ID to use (default: stealth/qwen3.6-plus)
+Supports two extraction approaches:
+- Method A: Classify then extract (two separate API calls)
+- Method B: Single call for both classification and extraction
 
-No credentials are logged or transmitted to stdout. Phone numbers and
-user PII are stripped locally before sending text to the model.
+Features:
+- Arabic prompts with JSON Schema and few-shot examples
+- finish_reason tracking for truncated responses
+- Single JSON repair attempt on parse failure
+- PII stripping (phones, user IDs) before sending to model
+- Cost and token tracking
+- No credentials logged or transmitted to stdout
 """
 
 from __future__ import annotations
@@ -17,9 +21,16 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from prompts import (
+    get_classify_prompt,
+    get_combined_prompt,
+    get_extract_prompt,
+    format_schema,
+    format_few_shot_examples,
+    LISTING_SCHEMA,
+)
 from .base import ModelProvider
 
 
@@ -41,6 +52,76 @@ def _strip_pii(text: str) -> str:
     return text
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely convert a value to float, returning default on failure."""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_int(value: Any, default: Any = None) -> Any:
+    """Safely convert a value to int, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _extract_json_from_text(text: str) -> str:
+    """Extract JSON object from model response text, handling markdown fences."""
+    text = text.strip()
+    # Remove markdown code fences
+    if text.startswith("```"):
+        parts = text.split("```", 2)
+        if len(parts) >= 3:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+    # Find the first { and last } to extract JSON object
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+    return text.strip()
+
+
+def _attempt_json_repair(text: str) -> Optional[Dict[str, Any]]:
+    """Attempt a single repair of malformed JSON.
+
+    Common fixes:
+    - Trailing commas before }
+    - Single quotes instead of double quotes
+    - Missing closing brace
+    - Unescaped newlines in strings
+    """
+    import re as _re
+
+    repaired = text.strip()
+
+    # Remove trailing commas before closing brace/bracket
+    repaired = _re.sub(r",\s*}", "}", repaired)
+    repaired = _re.sub(r",\s*\]", "]", repaired)
+
+    # Replace single quotes with double quotes (but not inside strings)
+    # This is a heuristic; may not work for all cases
+    if "'" in repaired and '"' not in repaired:
+        repaired = repaired.replace("'", '"')
+
+    # Try to add missing closing brace
+    open_count = repaired.count("{")
+    close_count = repaired.count("}")
+    if open_count > close_count:
+        repaired += "}" * (open_count - close_count)
+
+    try:
+        return json.loads(repaired)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 class KiloProvider(ModelProvider):
     """Kilo AI Gateway cloud model provider."""
 
@@ -59,6 +140,10 @@ class KiloProvider(ModelProvider):
         self.total_completion_tokens: int = 0
         self.total_cost_usd: float = 0.0
         self.request_count: int = 0
+        # Response diagnostics
+        self.last_finish_reason: Optional[str] = None
+        self.last_response_truncated: bool = False
+        self.last_raw_content: Optional[str] = None
 
     @property
     def provider_name(self) -> str:
@@ -80,6 +165,8 @@ class KiloProvider(ModelProvider):
     def _probe_server(self) -> bool:
         """Probe the models endpoint to verify connectivity."""
         try:
+            import urllib.request as urllib_request
+
             url = f"{self.base_url}/models"
             req = urllib_request.Request(url, method="GET")
             req.add_header("Authorization", f"Bearer {self.api_key}")
@@ -89,17 +176,22 @@ class KiloProvider(ModelProvider):
             return False
 
     def _chat(
-        self, messages: List[Dict[str, str]], max_tokens: int = 512
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """Send a chat completion request to Kilo AI Gateway.
 
-        Returns the full response JSON so we can extract usage/cost info.
+        Returns the full response JSON including usage and finish_reason.
         """
+        import urllib.request as urllib_request
+
         payload: Dict[str, Any] = {
             "model": self.model_id,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.1,
+            "temperature": temperature,
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib_request.Request(
@@ -114,122 +206,71 @@ class KiloProvider(ModelProvider):
         with urllib_request.urlopen(req, timeout=60) as resp:
             body = resp.read().decode("utf-8")
             result = json.loads(body)
-        return result
 
-    def classify(self, text: str) -> Dict[str, Any]:
-        if not self.is_available():
-            return {
-                "category": "unclear",
-                "confidence": 0.0,
-                "reasoning": "Kilo AI Gateway not available",
-            }
+        # Track diagnostics
+        self.last_raw_content = None
+        self.last_finish_reason = None
+        self.last_response_truncated = False
 
-        # Strip PII before sending to model
-        safe_text = _strip_pii(text)
-
-        prompt = (
-            "You are a real estate listing classifier for Arabic Facebook group posts.\n"
-            "Classify the post into exactly one category:\n"
-            "1. for_sale - property for sale\n"
-            "2. for_rent - property for rent\n"
-            "3. buy_or_rent_request - request to buy or rent\n"
-            "4. real_estate_service - contractor, gardening, maintenance services\n"
-            "5. not_real_estate - not related to real estate\n"
-            "6. unclear - cannot determine\n\n"
-            "Rules:\n"
-            "- Contractor/gardening services are NOT real estate listings for sale/rent\n"
-            "- Respond in JSON only\n\n"
-            f"Post text:\n{safe_text[:2000]}"
-        )
-
-        try:
-            response = self._chat(
-                [{"role": "user", "content": prompt}], max_tokens=256
+        choices = result.get("choices", [])
+        if choices:
+            msg = choices[0].get("message", {})
+            self.last_raw_content = msg.get("content", "")
+            self.last_finish_reason = choices[0].get("finish_reason")
+            self.last_response_truncated = (
+                self.last_finish_reason == "length"
             )
-            self._track_usage(response)
-            content = response["choices"][0]["message"]["content"]
-            result = self._parse_json(content)
-            return {
-                "category": result.get("category", "unclear"),
-                "confidence": float(result.get("confidence", 0.0)),
-                "reasoning": result.get("reasoning", ""),
-            }
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "category": "unclear",
-                "confidence": 0.0,
-                "reasoning": f"Model call failed: {exc}",
-            }
 
-    def extract(self, text: str, category: str) -> Dict[str, Any]:
-        if not self.is_available():
-            return {
-                "error": "Kilo AI Gateway not available",
-                "confidence": 0.0,
-            }
-
-        # Strip PII before sending to model
-        safe_text = _strip_pii(text)
-
-        prompt = (
-            "You are a real estate data extraction assistant for Arabic Facebook posts.\n"
-            "Extract structured fields from the post text below.\n"
-            "Rules:\n"
-            "- Do not invent prices, areas, or locations not mentioned.\n"
-            "- If a field is not mentioned, use null.\n"
-            "- Understand Arabic and Eastern Arabic numerals (١٢٣).\n"
-            "- Support Arabic and Kurdish text in the same post.\n"
-            "- Distinguish land area, building area, and garden area when clear.\n"
-            "- Do not convert currencies.\n"
-            "- Create a professional title without adding information not present.\n"
-            "- Phone numbers are already stripped; do not extract them.\n"
-            "- Respond in JSON only.\n\n"
-            f"Category: {category}\n"
-            f"Post text:\n{safe_text[:3000]}\n\n"
-            "Output JSON with keys: listing_type, property_type, title, description, "
-            "city, district, complex_name, area_sqm, bedrooms, bathrooms, floor, "
-            "furnished, price, currency, contact_phones, published_at, confidence"
-        )
-
-        try:
-            response = self._chat(
-                [{"role": "user", "content": prompt}], max_tokens=1024
-            )
-            self._track_usage(response)
-            content = response["choices"][0]["message"]["content"]
-            result = self._parse_json(content)
-            return result
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "error": f"Model call failed: {exc}",
-                "confidence": 0.0,
-            }
-
-    def _track_usage(self, response: Dict[str, Any]) -> None:
-        """Track token usage and estimated cost from API response."""
+        # Track usage
         self.request_count += 1
-        usage = response.get("usage", {})
+        usage = result.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
         self.total_prompt_tokens += prompt_tokens
         self.total_completion_tokens += completion_tokens
 
-        # Estimate cost based on model pricing (per 1K tokens)
-        # stealth/qwen3.6-plus: prompt $0.00000025/token, completion $0.0000015/token
-        # These are per-token prices, so multiply by token count / 1000
+        # Estimate cost (per 1K tokens)
         pricing = self._get_model_pricing()
         prompt_cost = (prompt_tokens / 1000) * pricing["prompt"]
         completion_cost = (completion_tokens / 1000) * pricing["completion"]
         self.total_cost_usd += prompt_cost + completion_cost
 
+        return result
+
+    def _parse_and_repair_json(
+        self, raw_content: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Parse JSON from model response with single repair attempt.
+
+        Returns (parsed_dict_or_None, error_message_or_None).
+        """
+        if not raw_content:
+            return None, "Empty response from model"
+
+        # Extract JSON from text (handle markdown fences)
+        json_text = _extract_json_from_text(raw_content)
+
+        # First attempt: direct parse
+        try:
+            return json.loads(json_text), None
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Second attempt: single repair
+        repaired = _attempt_json_repair(json_text)
+        if repaired is not None:
+            return repaired, None
+
+        return None, f"Failed to parse JSON after repair attempt. Raw: {raw_content[:200]}"
+
+    def _track_usage(self, response: Dict[str, Any]) -> None:
+        """Usage tracking is done in _chat directly."""
+        pass
+
     def _get_model_pricing(self) -> Dict[str, float]:
         """Return per-1K-token pricing for the configured model."""
-        # Known pricing from Kilo AI Gateway models endpoint
         pricing_table: Dict[str, Dict[str, float]] = {
-            "kilo-auto/free": {
-                "prompt": 0.0,
-                "completion": 0.0,
-            },
+            "kilo-auto/free": {"prompt": 0.0, "completion": 0.0},
             "kilo-auto/small": {
                 "prompt": 0.00000005,
                 "completion": 0.0000004,
@@ -242,10 +283,7 @@ class KiloProvider(ModelProvider):
                 "prompt": 0.0000005,
                 "completion": 0.0000015,
             },
-            "openai/gpt-4": {
-                "prompt": 0.00003,
-                "completion": 0.00006,
-            },
+            "openai/gpt-4": {"prompt": 0.00003, "completion": 0.00006},
         }
         return pricing_table.get(
             self.model_id, {"prompt": 0.000001, "completion": 0.000002}
@@ -263,19 +301,232 @@ class KiloProvider(ModelProvider):
             "estimated_cost_usd": round(self.total_cost_usd, 6),
         }
 
-    @staticmethod
-    def _parse_json(response: str) -> Dict[str, Any]:
-        """Parse JSON from a model response, handling markdown code fences."""
-        text = response.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)
-            if len(text) >= 3:
-                text = text[1]
-                if text.startswith("json"):
-                    text = text[4:]
-        text = text.strip()
-        return json.loads(text)
+    def get_response_diagnostics(self) -> Dict[str, Any]:
+        """Return last response diagnostics."""
+        return {
+            "finish_reason": self.last_finish_reason,
+            "truncated": self.last_response_truncated,
+            "raw_content_length": len(self.last_raw_content) if self.last_raw_content else 0,
+        }
 
+    # ------------------------------------------------------------------
+    # Method A: Classify then extract
+    # ------------------------------------------------------------------
 
-# Lazy import to avoid top-level urllib.request reference issue
-import urllib.request as urllib_request  # noqa: E402
+    def classify(self, text: str) -> Dict[str, Any]:
+        """Classify a post into a listing category (Method A step 1)."""
+        if not self.is_available():
+            return {
+                "category": "unclear",
+                "confidence": 0.0,
+                "reasoning": "Kilo AI Gateway not available",
+                "parse_error": None,
+                "finish_reason": None,
+                "truncated": False,
+            }
+
+        safe_text = _strip_pii(text)
+        prompt = get_classify_prompt(safe_text)
+
+        try:
+            response = self._chat(
+                [{"role": "user", "content": prompt}], max_tokens=256
+            )
+            content = response["choices"][0]["message"]["content"]
+            parsed, parse_error = self._parse_and_repair_json(content)
+
+            if parsed is None:
+                return {
+                    "category": "unclear",
+                    "confidence": 0.0,
+                    "reasoning": f"Parse error: {parse_error}",
+                    "parse_error": parse_error,
+                    "finish_reason": self.last_finish_reason,
+                    "truncated": self.last_response_truncated,
+                }
+
+            category = parsed.get("category", "unclear")
+            valid_categories = [
+                "for_sale",
+                "for_rent",
+                "buy_or_rent_request",
+                "real_estate_service",
+                "not_real_estate",
+                "unclear",
+            ]
+            if category not in valid_categories:
+                category = "unclear"
+
+            return {
+                "category": category,
+                "confidence": _safe_float(parsed.get("confidence", 0.0)),
+                "reasoning": parsed.get("reasoning", ""),
+                "parse_error": None,
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "category": "unclear",
+                "confidence": 0.0,
+                "reasoning": f"Model call failed: {exc}",
+                "parse_error": str(exc),
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+            }
+
+    def extract(self, text: str, category: str) -> Dict[str, Any]:
+        """Extract structured fields from a post (Method A step 2)."""
+        if not self.is_available():
+            return {
+                "error": "Kilo AI Gateway not available",
+                "confidence": 0.0,
+                "parse_error": None,
+                "finish_reason": None,
+                "truncated": False,
+            }
+
+        safe_text = _strip_pii(text)
+        prompt = get_extract_prompt(safe_text, category)
+
+        try:
+            response = self._chat(
+                [{"role": "user", "content": prompt}], max_tokens=1024
+            )
+            content = response["choices"][0]["message"]["content"]
+            parsed, parse_error = self._parse_and_repair_json(content)
+
+            if parsed is None:
+                return {
+                    "error": parse_error,
+                    "confidence": 0.0,
+                    "parse_error": parse_error,
+                    "finish_reason": self.last_finish_reason,
+                    "truncated": self.last_response_truncated,
+                }
+
+            # Map model output to schema fields with safe type conversion
+            extraction: Dict[str, Any] = {
+                "listing_type": parsed.get("listing_type") or category,
+                "property_type": parsed.get("property_type"),
+                "title": parsed.get("title"),
+                "description": parsed.get("description"),
+                "city": parsed.get("city"),
+                "district": parsed.get("district"),
+                "complex_name": parsed.get("complex_name"),
+                "area_sqm": _safe_int(parsed.get("area_sqm")),
+                "bedrooms": _safe_int(parsed.get("bedrooms")),
+                "bathrooms": _safe_int(parsed.get("bathrooms")),
+                "floor": parsed.get("floor"),
+                "furnished": parsed.get("furnished"),
+                "price": _safe_float(parsed.get("price")) if parsed.get("price") is not None else None,
+                "currency": parsed.get("currency"),
+                "contact_phones": parsed.get("contact_phones") or [],
+                "published_at": parsed.get("published_at"),
+                "confidence": _safe_float(parsed.get("confidence", 0.0)),
+                "parse_error": None,
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+            }
+            return extraction
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "error": f"Model call failed: {exc}",
+                "confidence": 0.0,
+                "parse_error": str(exc),
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+            }
+
+    # ------------------------------------------------------------------
+    # Method B: Single call for both classification and extraction
+    # ------------------------------------------------------------------
+
+    def classify_and_extract(self, text: str) -> Dict[str, Any]:
+        """Classify and extract in a single API call (Method B)."""
+        if not self.is_available():
+            return {
+                "category": "unclear",
+                "confidence": 0.0,
+                "reasoning": "Kilo AI Gateway not available",
+                "parse_error": None,
+                "finish_reason": None,
+                "truncated": False,
+                "extraction": None,
+            }
+
+        safe_text = _strip_pii(text)
+        prompt = get_combined_prompt(safe_text)
+
+        try:
+            response = self._chat(
+                [{"role": "user", "content": prompt}], max_tokens=1024
+            )
+            content = response["choices"][0]["message"]["content"]
+            parsed, parse_error = self._parse_and_repair_json(content)
+
+            if parsed is None:
+                return {
+                    "category": "unclear",
+                    "confidence": 0.0,
+                    "reasoning": f"Parse error: {parse_error}",
+                    "parse_error": parse_error,
+                    "finish_reason": self.last_finish_reason,
+                    "truncated": self.last_response_truncated,
+                    "extraction": None,
+                }
+
+            category = parsed.get("category", "unclear")
+            valid_categories = [
+                "for_sale",
+                "for_rent",
+                "buy_or_rent_request",
+                "real_estate_service",
+                "not_real_estate",
+                "unclear",
+            ]
+            if category not in valid_categories:
+                category = "unclear"
+
+            extraction: Dict[str, Any] = {
+                "listing_type": parsed.get("listing_type") or category,
+                "property_type": parsed.get("property_type"),
+                "title": parsed.get("title"),
+                "description": parsed.get("description"),
+                "city": parsed.get("city"),
+                "district": parsed.get("district"),
+                "complex_name": parsed.get("complex_name"),
+                "area_sqm": _safe_int(parsed.get("area_sqm")),
+                "bedrooms": _safe_int(parsed.get("bedrooms")),
+                "bathrooms": _safe_int(parsed.get("bathrooms")),
+                "floor": parsed.get("floor"),
+                "furnished": parsed.get("furnished"),
+                "price": _safe_float(parsed.get("price")) if parsed.get("price") is not None else None,
+                "currency": parsed.get("currency"),
+                "contact_phones": parsed.get("contact_phones") or [],
+                "published_at": parsed.get("published_at"),
+                "confidence": _safe_float(parsed.get("confidence", 0.0)),
+                "parse_error": None,
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+            }
+
+            return {
+                "category": category,
+                "confidence": _safe_float(parsed.get("confidence", 0.0)),
+                "reasoning": parsed.get("reasoning", ""),
+                "parse_error": None,
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+                "extraction": extraction,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "category": "unclear",
+                "confidence": 0.0,
+                "reasoning": f"Model call failed: {exc}",
+                "parse_error": str(exc),
+                "finish_reason": self.last_finish_reason,
+                "truncated": self.last_response_truncated,
+                "extraction": None,
+            }
