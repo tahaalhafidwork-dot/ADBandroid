@@ -23,6 +23,9 @@ from processing.normalizer import ListingNormalizer  # noqa: E402
 from providers.kilo_provider import KiloProvider  # noqa: E402
 from providers.local_provider import LocalProvider  # noqa: E402
 
+# Cost cap in USD — user must approve anything above this
+COST_CAP_USD = 0.10
+
 
 def load_posts(input_path: str) -> List[Dict[str, Any]]:
     """Load posts from the Apify results JSON file."""
@@ -54,7 +57,7 @@ def run_pipeline(
     """Run the full pipeline on a list of posts.
 
     Returns a dict with structured_listings, rejected_posts, duplicates,
-    and pipeline statistics.
+    and pipeline statistics including cost tracking.
     """
     provider = get_provider(provider_name)
     print(f"Using provider: {provider.provider_name}")
@@ -153,6 +156,18 @@ def run_pipeline(
         )
         field_completion[field] = count
 
+    # Cost summary from provider
+    cost_summary: Dict[str, Any] = {}
+    if hasattr(provider, "get_cost_summary"):
+        cost_summary = provider.get_cost_summary()
+        cost_cap_exceeded = cost_summary.get("estimated_cost_usd", 0) > COST_CAP_USD
+        if cost_cap_exceeded:
+            print(
+                f"\nWARNING: Estimated cost ${cost_summary['estimated_cost_usd']:.6f} "
+                f"exceeds cost cap ${COST_CAP_USD}",
+                file=sys.stderr,
+            )
+
     stats = {
         "total_posts": len(posts),
         "provider": provider.provider_name,
@@ -173,6 +188,8 @@ def run_pipeline(
             field: round(count / total_listings, 2) if total_listings > 0 else 0.0
             for field, count in field_completion.items()
         },
+        "cost_summary": cost_summary,
+        "cost_cap_usd": COST_CAP_USD,
     }
 
     return {
@@ -244,8 +261,21 @@ def main() -> None:
     print("=" * 60)
     stats = result["stats"]
     for key, value in stats.items():
-        if key != "field_completion_rate":
+        if key not in ("field_completion_rate", "cost_summary"):
             print(f"  {key}: {value}")
+
+    if stats.get("cost_summary"):
+        cs = stats["cost_summary"]
+        print("\n  COST SUMMARY:")
+        print(f"    Provider: {cs.get('provider')}")
+        print(f"    Model: {cs.get('model')}")
+        print(f"    Requests: {cs.get('requests')}")
+        print(f"    Prompt tokens: {cs.get('prompt_tokens')}")
+        print(f"    Completion tokens: {cs.get('completion_tokens')}")
+        print(f"    Total tokens: {cs.get('total_tokens')}")
+        print(f"    Estimated cost: ${cs.get('estimated_cost_usd', 0):.6f}")
+        print(f"    Cost cap: ${stats.get('cost_cap_usd')}")
+
     print("\n  Field completion rates:")
     for field, rate in stats.get("field_completion_rate", {}).items():
         print(f"    {field}: {rate}")

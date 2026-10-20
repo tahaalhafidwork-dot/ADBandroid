@@ -8,6 +8,14 @@ from typing import Any, Dict, List
 from providers.base import ModelProvider
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely convert a value to float, returning default on failure."""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 class ListingExtractor:
     """Extracts structured fields from classified posts using a model provider."""
 
@@ -37,7 +45,7 @@ class ListingExtractor:
         extraction: Dict[str, Any] = {
             "skipped": False,
             "provider": self.provider.provider_name,
-            "confidence": float(result.get("confidence", 0.0)),
+            "confidence": _safe_float(result.get("confidence", 0.0)),
         }
 
         # Map model output to schema fields
