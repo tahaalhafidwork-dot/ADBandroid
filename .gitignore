@@ -1,0 +1,21 @@
+# Binaries
+*.apk
+*.zip
+*.jar
+*.so
+*.odex
+*.vdex
+
+# Build outputs
+jadx_output/
+native_libs/
+tools/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Python
+__pycache__/
+*.pyc
