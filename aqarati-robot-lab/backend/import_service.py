@@ -140,6 +140,7 @@ def _add_post(session: Session, batch_id: int, item: dict[str, Any], group: str,
         has_json_error=json_error,
         is_truncated=truncated,
         is_duplicate=group == "duplicate",
+        duplicate_classification="confirmed" if group == "duplicate" else None,
         import_batch_id=batch_id,
         raw_payload=item,
     )
@@ -202,6 +203,8 @@ def _add_usage(session: Session, batch_id: int, stats: dict[str, Any]) -> None:
         truncated_responses=len(truncated) if isinstance(truncated, list) else None,
         actual_cost=_as_number(cost.get("estimated_cost_usd")),
         currency="USD" if cost.get("estimated_cost_usd") is not None else None,
+        metric_scope="historical",
+        source_label="legacy_import",
     ))
 
 

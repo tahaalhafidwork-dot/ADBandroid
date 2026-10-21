@@ -33,6 +33,7 @@ class SourcePost(Base):
     has_json_error: Mapped[bool] = mapped_column(Boolean, default=False)
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
+    duplicate_classification: Mapped[str | None] = mapped_column(String(30), index=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"))
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -122,6 +123,46 @@ class ModelUsage(Base):
     actual_cost: Mapped[float | None] = mapped_column(Float)
     currency: Mapped[str | None] = mapped_column(String(10))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    metric_scope: Mapped[str] = mapped_column(String(20), default="historical", index=True)
+    source_label: Mapped[str | None] = mapped_column(String(100))
+
+
+class AIProviderConfig(Base):
+    __tablename__ = "ai_provider_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_key: Mapped[str] = mapped_column(String(50), unique=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    api_base_url: Mapped[str] = mapped_column(String(500))
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    operation_mode: Mapped[str] = mapped_column(String(20))
+    max_tokens: Mapped[int | None] = mapped_column(Integer)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    request_limit: Mapped[int | None] = mapped_column(Integer)
+    cost_cap: Mapped[float | None] = mapped_column(Float)
+    connection_status: Mapped[str] = mapped_column(String(30), default="not_tested")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    runtime_metrics: Mapped[list["ProviderRuntimeMetric"]] = relationship(back_populates="provider")
+
+
+class ProviderRuntimeMetric(Base):
+    __tablename__ = "provider_runtime_metrics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_config_id: Mapped[int] = mapped_column(ForeignKey("ai_provider_configs.id"), index=True)
+    request_count: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    average_response_time_ms: Mapped[float | None] = mapped_column(Float)
+    connection_errors: Mapped[int | None] = mapped_column(Integer)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    provider: Mapped[AIProviderConfig] = relationship(back_populates="runtime_metrics")
 
 
 class DialectTerm(Base):
@@ -178,4 +219,3 @@ class SystemEvent(Base):
     entity_id: Mapped[int | None] = mapped_column(Integer)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-

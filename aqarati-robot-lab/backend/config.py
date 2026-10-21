@@ -21,6 +21,20 @@ class ConfigError(ValueError):
     """Raised when an environment override is invalid."""
 
 
+def _env_port(name: str, default: int) -> int:
+    variable = "AQARATI_BACKEND_PORT" if name == "BACKEND_PORT" else ENV_PREFIX + name
+    raw = os.environ.get(variable)
+    if raw is None:
+        return default
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ConfigError("{0} must be an integer".format(variable)) from exc
+    if not 1 <= port <= 65535:
+        raise ConfigError("{0} must be between 1 and 65535".format(variable))
+    return port
+
+
 def _env_path(name: str, default: Path) -> Path:
     """Read a path override from the environment, relative to the project."""
     raw = os.environ.get(ENV_PREFIX + name)
@@ -61,6 +75,7 @@ class Settings:
     database_path: Path
     allow_pii_import: bool
     offline: bool
+    backend_port: int
 
     @classmethod
     def load(cls) -> "Settings":
@@ -77,6 +92,7 @@ class Settings:
             allow_pii_import=_env_flag("ALLOW_PII_IMPORT", False),
             # The lab never talks to a paid service during scaffolding.
             offline=_env_flag("OFFLINE", True),
+            backend_port=_env_port("BACKEND_PORT", 8000),
         )
 
     @property
@@ -96,4 +112,5 @@ class Settings:
             "database_path": paths.relative_to_repo(self.database_path),
             "allow_pii_import": self.allow_pii_import,
             "offline": self.offline,
+            "backend_port": self.backend_port,
         }

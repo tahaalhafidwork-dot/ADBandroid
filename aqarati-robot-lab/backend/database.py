@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import Settings
@@ -36,16 +36,26 @@ def get_session():
 
 
 def initialize_database() -> None:
-    from . import models  # noqa: F401
+    """Verify migrations and seed reference rows without altering the schema."""
+    from .migrations import EXPECTED_REVISION
 
-    Base.metadata.create_all(engine)
+    with engine.connect() as connection:
+        try:
+            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        except Exception as exc:
+            raise RuntimeError("Database is not initialized; run scripts/init_database.py") from exc
+    if revision != EXPECTED_REVISION:
+        raise RuntimeError(
+            "Database revision is {0}; expected {1}. Run scripts/migrate_database.py first.".format(
+                revision, EXPECTED_REVISION
+            )
+        )
     with SessionLocal.begin() as session:
-        from .seed import seed_dialect_terms
+        from .seed import seed_reference_data
 
-        seed_dialect_terms(session)
+        seed_reference_data(session)
 
 
 def session_scope() -> Session:
     """Return a session for scripts; callers must close it."""
     return SessionLocal()
-

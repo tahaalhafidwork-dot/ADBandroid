@@ -1,13 +1,15 @@
-# Aqarati Robot AI Lab — المرحلة الثانية
+# Aqarati Robot AI Lab — المرحلة 3A
 
 لوحة تحكم محلية مستقلة لمراجعة نتائج معالجة الإعلانات العقارية ومراقبة المهام واستخدام النماذج. تعمل الواجهة بالعربية وRTL، وتقرأ جميع الأرقام من SQLite؛ لا توجد بيانات عقارية تجريبية ثابتة في الواجهة.
 
 ## ما تم تنفيذه
 
-- FastAPI مع توثيق OpenAPI على `/docs` و11 مسار REST.
+- FastAPI مع توثيق OpenAPI ومسارات منفصلة للإحصاءات التاريخية والحية وإعدادات المزودات.
 - SQLite بوضع WAL، وSQLAlchemy 2، وترحيلات Alembic.
 - استيراد متحقق منه للملف المحلي `aqarati_50_results.json` مع منع التكرار ببصمة SHA-256.
-- لوحة معلومات، جدول منشورات وتفاصيل، مراجعة مسودات وسجل تغييرات، مراقبة نماذج ومهام، وقاموس عراقي قابل للتحرير.
+- لوحة معلومات، مراجعة مسودات، مراقبة تاريخية وحية، إعدادات مزودات، مهام، وقاموس عراقي.
+- إعدادات مستقبلية معطلة افتراضيًا لـKilo AI Gateway وOllama وOpenVINO؛ المرحلة 3A لا تتصل بها.
+- اختيار المنفذ عبر `AQARATI_BACKEND_PORT`، مع انتقال آمن من 8000 إلى 8010 إن كان الافتراضي مشغولًا.
 - React + TypeScript + Vite + Tailwind + Lucide + Recharts، بتصميم RTL متجاوب.
 - عزل محلي: الخادم مربوط بـ`127.0.0.1`، مع Trusted Host وOrigin guard للعمليات المعدّلة.
 - لا تشغيل لـApify أو Kilo أو OCR، ولا نشر إلى نظام عقاراتي.
@@ -26,7 +28,7 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python scripts\init_database.py
+python scripts\migrate_database.py
 cd frontend
 npm install
 cd ..
@@ -45,7 +47,31 @@ python scripts\start_backend.py
 python scripts\start_frontend.py
 ```
 
-ثم افتح `http://127.0.0.1:5173`. توثيق API متاح محليًا على `http://127.0.0.1:8000/docs`.
+يعرض المشغّلان منفذ Backend وهدف Vite Proxy بوضوح. إذا كان 8000 مشغولًا ينتقل Backend إلى 8010 من دون إنهاء العملية الموجودة، ويقرأ Frontend المنفذ الفعلي تلقائيًا. ثم افتح `http://127.0.0.1:5173`.
+
+لتحديد المنفذ صراحةً قبل تشغيل النافذتين:
+
+```powershell
+$env:AQARATI_BACKEND_PORT = "8010"
+python scripts\start_backend.py
+```
+
+## الترحيل والنسخ الاحتياطي
+
+على قاعدة موجودة، ينشئ الأمر التالي نسخة SQLite متسقة داخل `data/processed/backups/` قبل تطبيق Alembic:
+
+```powershell
+python scripts\migrate_database.py
+```
+
+لاختبار الترحيل على نسخة فقط، مع إبقاء الأصل دون تغيير:
+
+```powershell
+python scripts\migrate_database.py --test-copy data/processed/phase3a_test.sqlite3
+$env:AQARATI_LAB_DATABASE = "data/processed/phase3a_test.sqlite3"
+```
+
+الترحيل الجديد هو `20261021_02` ويضيف إعدادات المزودات والمقاييس الحية ولا يحذف أي جدول أو بيانات استيراد.
 
 ## استيراد البيانات القديمة
 
@@ -84,6 +110,9 @@ npm run build
 | PATCH | `/api/listings/{id}` | تعديل محلي مع سجل مراجعة |
 | GET | `/api/jobs` | سجل المهام |
 | GET | `/api/models/usage` | قياسات الاستخدام التاريخية |
+| GET | `/api/models/live` | القياسات الحية المنفصلة حسب المزود |
+| GET | `/api/models/providers` | إعدادات المزودات الآمنة |
+| PATCH | `/api/models/providers/{id}` | تعديل الإعدادات من دون اختبار اتصال |
 | GET/POST | `/api/dialect/terms` | قراءة/إضافة المصطلحات |
 | PATCH | `/api/dialect/terms/{id}` | تعديل واعتماد المصطلح |
 | POST | `/api/imports/legacy` | استيراد المصدر المسموح |
@@ -94,4 +123,5 @@ npm run build
 - لا تُسجل النصوص الأصلية في رسائل الأخطاء أو أحداث النظام.
 - الروابط والصور تُعرض فقط إن وجدت في المصدر، ولا يُفترض وجودها.
 - القيم التاريخية غير المتاحة ترجع `null` وتظهر «غير متوفر»؛ لا تُشتق توكنات لكل منشور من إجمالي التشغيل.
+- لا يحتوي مخطط SQLite أو API على حقل مفتاح API. تُحفظ الأسرار مستقبلًا في متغيرات البيئة أو مخزن أسرار محلي فقط.
 - راجع [PROJECT_BOUNDARIES.md](PROJECT_BOUNDARIES.md) و[docs/architecture.md](docs/architecture.md) للتفاصيل.

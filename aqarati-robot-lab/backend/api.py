@@ -9,11 +9,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
+from pydantic import ValidationError
 
 from .database import get_session
 from .import_service import LegacyDataError, import_legacy_json
-from .models import DialectTerm, ListingDraft, ModelUsage, ProcessingJob, ReviewAction, SourcePost
-from .schemas import DialectTermCreate, DialectTermPatch, LegacyImportRequest, ListingPatch
+from .models import (
+    AIProviderConfig, DialectTerm, ListingDraft, ModelUsage, ProcessingAttempt,
+    ProcessingJob, ProviderRuntimeMetric, ReviewAction, SourcePost, SystemEvent,
+)
+from .schemas import (
+    DialectTermCreate, DialectTermPatch, LegacyImportRequest, ListingPatch,
+    ProviderSettings, ProviderSettingsPatch,
+)
+from .config import Settings
 
 router = APIRouter(prefix="/api")
 
@@ -43,31 +51,65 @@ def _listing_dict(item: ListingDraft) -> dict[str, Any]:
 @router.get("/health", tags=["system"])
 def health(session: Session = Depends(get_session)):
     session.execute(select(1))
-    return {"status": "ok", "database": "connected", "offline": True}
+    return {"status": "ok", "database": "connected", "offline": True,
+            "host": "127.0.0.1", "port": Settings.load().backend_port}
 
 
 @router.get("/dashboard", tags=["dashboard"])
 def dashboard(session: Session = Depends(get_session)):
     scalar = lambda statement: session.scalar(statement) or 0
     total = scalar(select(func.count(SourcePost.id)))
+    unique_posts = scalar(select(func.count(SourcePost.id)).where(SourcePost.is_duplicate.is_(False)))
     processed = scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.in_(["ok", "completed", "success"])))
+    failed = scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.in_(["failed", "error", "rejected"])))
+    attempts = scalar(select(func.count(ProcessingAttempt.id)))
+    actual_requests = session.scalar(select(func.sum(ModelUsage.request_count)).where(ModelUsage.metric_scope == "historical"))
     listings = scalar(select(func.count(ListingDraft.id)))
-    sale = scalar(select(func.count(SourcePost.id)).where(SourcePost.category == "for_sale"))
-    rent = scalar(select(func.count(SourcePost.id)).where(SourcePost.category == "for_rent"))
-    services = scalar(select(func.count(SourcePost.id)).where(SourcePost.category == "real_estate_service"))
-    unclear = scalar(select(func.count(SourcePost.id)).where(SourcePost.is_ambiguous.is_(True)))
     json_errors = scalar(select(func.count(SourcePost.id)).where(SourcePost.has_json_error.is_(True)))
     truncated = scalar(select(func.count(SourcePost.id)).where(SourcePost.is_truncated.is_(True)))
-    duplicates = scalar(select(func.count(SourcePost.id)).where(SourcePost.is_duplicate.is_(True)))
-    review = scalar(select(func.count(ListingDraft.id)).where(ListingDraft.review_status.in_(["draft", "needs_review"])))
+    confirmed_duplicates = scalar(select(func.count(SourcePost.id)).where(SourcePost.duplicate_classification == "confirmed"))
+    potential_rows = scalar(select(func.count(SourcePost.id)).where(SourcePost.duplicate_classification == "potential"))
+    has_potential_history = session.scalar(select(func.count(SourcePost.id)).where(SourcePost.duplicate_classification == "potential"))
     categories = session.execute(select(SourcePost.category, func.count(SourcePost.id)).group_by(SourcePost.category)).all()
     states = session.execute(select(SourcePost.processing_status, func.count(SourcePost.id)).group_by(SourcePost.processing_status)).all()
+    latest_ids = select(func.max(ProviderRuntimeMetric.id)).group_by(ProviderRuntimeMetric.provider_config_id)
+    live_rows = session.scalars(select(ProviderRuntimeMetric).where(ProviderRuntimeMetric.id.in_(latest_ids))).all()
+
+    def live_sum(field: str):
+        values = [getattr(row, field) for row in live_rows if getattr(row, field) is not None]
+        return sum(values) if values else None
+
+    historical = {
+        "imported_posts": total,
+        "unique_imported_posts": unique_posts,
+        "processed_successfully": processed,
+        "failed_posts": failed,
+        "processing_attempts": attempts,
+        "actual_api_requests": actual_requests,
+        "json_errors": json_errors,
+        "truncated_responses": truncated,
+        "unique_listing_drafts": listings,
+        "confirmed_duplicates": confirmed_duplicates,
+        # The legacy source has no separate potential-duplicate population.
+        "potential_duplicates": potential_rows if has_potential_history else None,
+    }
+    live = {
+        "request_count": live_sum("request_count"),
+        "input_tokens": live_sum("input_tokens"),
+        "output_tokens": live_sum("output_tokens"),
+        "total_tokens": live_sum("total_tokens"),
+        "connection_errors": live_sum("connection_errors"),
+        "average_response_time_ms": None,
+        "last_activity_at": max((row.last_activity_at for row in live_rows if row.last_activity_at), default=None),
+    }
+    response_time_values = [row.average_response_time_ms for row in live_rows if row.average_response_time_ms is not None]
+    if response_time_values:
+        live["average_response_time_ms"] = sum(response_time_values) / len(response_time_values)
+    if live["last_activity_at"]:
+        live["last_activity_at"] = _iso(live["last_activity_at"])
     return {
-        "metrics": {"total_posts": total, "processed_posts": processed, "sale_listings": sale,
-                    "rent_listings": rent, "real_estate_services": services, "unclear_posts": unclear,
-                    "json_errors": json_errors, "truncated_responses": truncated,
-                    "duplicate_listings": duplicates, "drafts_ready_for_review": review,
-                    "listing_drafts": listings},
+        "historical_import": historical,
+        "live_monitoring": live,
         "category_distribution": [{"name": key or "غير مصنف", "value": count} for key, count in categories],
         "processing_distribution": [{"name": key or "غير معروف", "value": count} for key, count in states],
     }
@@ -179,15 +221,82 @@ def jobs(session: Session = Depends(get_session)):
 
 
 @router.get("/models/usage", tags=["monitoring"])
-def model_usage(session: Session = Depends(get_session)):
-    rows = session.scalars(select(ModelUsage).order_by(desc(ModelUsage.recorded_at))).all()
+def model_usage(scope: str = Query(default="historical", pattern="^(historical|live)$"), session: Session = Depends(get_session)):
+    rows = session.scalars(select(ModelUsage).where(ModelUsage.metric_scope == scope).order_by(desc(ModelUsage.recorded_at))).all()
     return [{"id": row.id, "provider": row.provider, "model_name": row.model_name,
              "request_count": row.request_count, "input_tokens": row.input_tokens,
              "output_tokens": row.output_tokens, "total_tokens": row.total_tokens,
              "response_time_ms": row.response_time_ms, "api_errors": row.api_errors,
              "json_errors": row.json_errors, "truncated_responses": row.truncated_responses,
              "actual_cost": row.actual_cost, "currency": row.currency,
-             "recorded_at": _iso(row.recorded_at)} for row in rows]
+             "recorded_at": _iso(row.recorded_at), "scope": row.metric_scope,
+             "source_label": row.source_label} for row in rows]
+
+
+def _provider_dict(row: AIProviderConfig) -> dict[str, Any]:
+    return {"id": row.id, "provider_key": row.provider_key, "display_name": row.display_name,
+            "api_base_url": row.api_base_url, "model_name": row.model_name,
+            "is_enabled": row.is_enabled, "operation_mode": row.operation_mode,
+            "max_tokens": row.max_tokens, "timeout_seconds": row.timeout_seconds,
+            "request_limit": row.request_limit, "cost_cap": row.cost_cap,
+            "connection_status": row.connection_status,
+            "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
+
+
+@router.get("/models/providers", tags=["model-settings"])
+def providers(session: Session = Depends(get_session)):
+    return [_provider_dict(row) for row in session.scalars(select(AIProviderConfig).order_by(AIProviderConfig.id)).all()]
+
+
+@router.patch("/models/providers/{provider_id}", tags=["model-settings"])
+def update_provider(provider_id: int, payload: ProviderSettingsPatch, session: Session = Depends(get_session)):
+    row = session.get(AIProviderConfig, provider_id)
+    if not row:
+        raise HTTPException(404, "المزود غير موجود")
+    updates = payload.model_dump(exclude_unset=True)
+    candidate = {
+        "display_name": row.display_name, "api_base_url": row.api_base_url,
+        "model_name": row.model_name, "is_enabled": row.is_enabled,
+        "operation_mode": row.operation_mode, "max_tokens": row.max_tokens,
+        "timeout_seconds": row.timeout_seconds, "request_limit": row.request_limit,
+        "cost_cap": row.cost_cap, **updates,
+    }
+    try:
+        validated = ProviderSettings.model_validate(candidate)
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    for key, value in validated.model_dump().items():
+        setattr(row, key, value)
+    # Editing never claims that a network connection was tested.
+    row.connection_status = "not_tested"
+    session.add(SystemEvent(event_type="provider_settings_updated", entity_type="ai_provider_config",
+                            entity_id=row.id, details={"fields": sorted(updates)}))
+    session.commit()
+    session.refresh(row)
+    return _provider_dict(row)
+
+
+@router.get("/models/live", tags=["monitoring"])
+def live_model_monitoring(session: Session = Depends(get_session)):
+    provider_rows = session.scalars(select(AIProviderConfig).order_by(AIProviderConfig.id)).all()
+    result = []
+    for provider in provider_rows:
+        metric = session.scalar(
+            select(ProviderRuntimeMetric)
+            .where(ProviderRuntimeMetric.provider_config_id == provider.id)
+            .order_by(desc(ProviderRuntimeMetric.captured_at)).limit(1)
+        )
+        result.append({
+            "provider": _provider_dict(provider),
+            "metrics": None if metric is None else {
+                "request_count": metric.request_count, "input_tokens": metric.input_tokens,
+                "output_tokens": metric.output_tokens, "total_tokens": metric.total_tokens,
+                "average_response_time_ms": metric.average_response_time_ms,
+                "connection_errors": metric.connection_errors,
+                "last_activity_at": _iso(metric.last_activity_at), "captured_at": _iso(metric.captured_at),
+            },
+        })
+    return result
 
 
 def _term_dict(row: DialectTerm):

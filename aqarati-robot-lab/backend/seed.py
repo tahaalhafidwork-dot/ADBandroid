@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import DialectTerm
+from .models import AIProviderConfig, DialectTerm
 
 SEED_TERMS = (
     ("طابو", "سند ملكية العقار", "الملكية والتسجيل"),
@@ -15,6 +15,12 @@ SEED_TERMS = (
     ("أقساط", "دفعات موزعة على مدد زمنية", "شروط الدفع"),
 )
 
+PROVIDER_SEEDS = (
+    {"provider_key": "kilo", "display_name": "Kilo AI Gateway", "api_base_url": "https://api.kilo.ai", "operation_mode": "cloud"},
+    {"provider_key": "ollama", "display_name": "Ollama", "api_base_url": "http://127.0.0.1:11434", "operation_mode": "local"},
+    {"provider_key": "openvino", "display_name": "OpenVINO", "api_base_url": "http://127.0.0.1:8001", "operation_mode": "local"},
+)
+
 
 def seed_dialect_terms(session: Session) -> None:
     existing = set(session.scalars(select(DialectTerm.term)).all())
@@ -22,3 +28,14 @@ def seed_dialect_terms(session: Session) -> None:
         if term not in existing:
             session.add(DialectTerm(term=term, meaning=meaning, context=context))
 
+
+def seed_provider_configs(session: Session) -> None:
+    existing = set(session.scalars(select(AIProviderConfig.provider_key)).all())
+    for values in PROVIDER_SEEDS:
+        if values["provider_key"] not in existing:
+            session.add(AIProviderConfig(**values, is_enabled=False, connection_status="not_tested", timeout_seconds=30))
+
+
+def seed_reference_data(session: Session) -> None:
+    seed_dialect_terms(session)
+    seed_provider_configs(session)

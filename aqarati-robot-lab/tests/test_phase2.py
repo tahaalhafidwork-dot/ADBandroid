@@ -84,9 +84,9 @@ class TestPhaseTwo:
         self._seed_posts()
         response = self.client.get("/api/dashboard")
         assert response.status_code == 200
-        metrics = response.json()["metrics"]
-        assert metrics["total_posts"] == 2
-        assert metrics["sale_listings"] == 1
+        metrics = response.json()["historical_import"]
+        assert metrics["imported_posts"] == 2
+        assert metrics["unique_imported_posts"] == 2
         assert metrics["json_errors"] == 1
         assert metrics["truncated_responses"] == 1
 
@@ -130,4 +130,3 @@ class TestPhaseTwo:
             "/api/imports/legacy",
         }
         assert required <= set(route_paths)
-
