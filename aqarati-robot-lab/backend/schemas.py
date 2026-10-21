@@ -133,12 +133,14 @@ class AITestPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     post_id: int = Field(gt=0)
+    provider_key: Literal["kilo", "ollama", "openvino"] = "kilo"
 
 
 class AITestRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     post_id: int = Field(gt=0)
+    provider_key: Literal["kilo", "ollama", "openvino"] = "kilo"
     preview_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     idempotency_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
     confirmed_external_send: bool

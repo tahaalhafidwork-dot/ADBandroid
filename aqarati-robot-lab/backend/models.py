@@ -86,6 +86,43 @@ class ProcessingJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     errors: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"))
+    provider_config_id: Mapped[int | None] = mapped_column(ForeignKey("ai_provider_configs.id"), index=True)
+    max_retries: Mapped[int] = mapped_column(Integer, default=1)
+    max_requests: Mapped[int | None] = mapped_column(Integer)
+    max_tokens_budget: Mapped[int | None] = mapped_column(Integer)
+    max_cost_budget: Mapped[float | None] = mapped_column(Float)
+    actual_requests: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    actual_cost: Mapped[float | None] = mapped_column(Float)
+    average_response_time_ms: Mapped[float | None] = mapped_column(Float)
+    force_reprocess: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    items: Mapped[list["ProcessingJobItem"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class ProcessingJobItem(Base):
+    __tablename__ = "processing_job_items"
+    __table_args__ = (UniqueConstraint("job_id", "source_post_id", name="uq_processing_job_post"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("processing_jobs.id"), index=True)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("source_posts.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    ai_test_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_test_runs.id"))
+    last_error_type: Mapped[str | None] = mapped_column(String(100))
+    last_error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    job: Mapped[ProcessingJob] = relationship(back_populates="items")
 
 
 class ProcessingAttempt(Base):
@@ -230,6 +267,61 @@ class AITestReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     test_run: Mapped[AITestRun] = relationship(back_populates="reviews")
+
+
+class OCRResult(Base):
+    __tablename__ = "ocr_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("source_posts.id"), index=True)
+    image_index: Mapped[int | None] = mapped_column(Integer)
+    source_kind: Mapped[str] = mapped_column(String(20))
+    source_reference: Mapped[str] = mapped_column(Text)
+    cached_image_path: Mapped[str | None] = mapped_column(String(500))
+    engine: Mapped[str] = mapped_column(String(50))
+    languages: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    corrected_text: Mapped[str | None] = mapped_column(Text)
+    structured_suggestions: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    review_status: Mapped[str] = mapped_column(String(30), default="unreviewed")
+    error_type: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AqaratiIntegrationConfig(Base):
+    __tablename__ = "aqarati_integration_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    base_url: Mapped[str | None] = mapped_column(String(500))
+    service_identity: Mapped[str] = mapped_column(String(100), default="Aqarati Robot")
+    draft_path: Mapped[str] = mapped_column(String(250), default="/api/robot/drafts")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    connection_status: Mapped[str] = mapped_column(String(30), default="not_tested")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AqaratiSyncRecord(Base):
+    __tablename__ = "aqarati_sync_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("listing_drafts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    remote_draft_id: Mapped[str | None] = mapped_column(String(200))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    include_images: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    error_type: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class DialectTerm(Base):

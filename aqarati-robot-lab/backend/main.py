@@ -11,7 +11,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api import router
 from .ai_tests import router as ai_tests_router
-from .database import initialize_database
+from .local_models import router as local_models_router
+from .processing_api import router as processing_router
+from .ocr_api import router as ocr_router
+from .integration_api import router as integration_router
+from .database import SessionLocal, initialize_database
+from .processing.jobs import recover_interrupted_jobs
 
 def _local_origin(host: str) -> str:
     # Split the scheme marker so the static path scanner cannot mistake a URL
@@ -25,6 +30,8 @@ ALLOWED_ORIGINS = {_local_origin("127.0.0.1"), _local_origin("localhost")}
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_database()
+    with SessionLocal() as session:
+        recover_interrupted_jobs(session)
     yield
 
 
@@ -55,3 +62,7 @@ async def local_origin_guard(request: Request, call_next):
 
 app.include_router(router)
 app.include_router(ai_tests_router)
+app.include_router(local_models_router)
+app.include_router(processing_router)
+app.include_router(ocr_router)
+app.include_router(integration_router)

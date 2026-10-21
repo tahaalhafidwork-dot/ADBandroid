@@ -76,6 +76,8 @@ class Settings:
     allow_pii_import: bool
     offline: bool
     enable_cloud_ai_test: bool
+    enable_image_download: bool
+    enable_aqarati_sync: bool
     backend_port: int
 
     @classmethod
@@ -96,6 +98,8 @@ class Settings:
             # Separate kill switch: an operator must opt in immediately before
             # the single-post cloud experiment. It defaults to disabled.
             enable_cloud_ai_test=_env_flag("ENABLE_CLOUD_AI_TEST", False),
+            enable_image_download=_env_flag("ENABLE_IMAGE_DOWNLOAD", False),
+            enable_aqarati_sync=_env_flag("ENABLE_AQARATI_SYNC", False),
             backend_port=_env_port("BACKEND_PORT", 8000),
         )
 
@@ -117,5 +121,7 @@ class Settings:
             "allow_pii_import": self.allow_pii_import,
             "offline": self.offline,
             "enable_cloud_ai_test": self.enable_cloud_ai_test,
+            "enable_image_download": self.enable_image_download,
+            "enable_aqarati_sync": self.enable_aqarati_sync,
             "backend_port": self.backend_port,
         }

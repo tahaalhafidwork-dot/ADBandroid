@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 Category = Literal["for_sale", "for_rent", "real_estate_service", "unclear", "not_real_estate"]
 PropertyType = Literal[
     "apartment", "house", "land", "villa", "commercial", "office", "building",
-    "farm", "warehouse", "room", "other", "unclear",
+    "farm", "warehouse", "room", "shop", "residential_complex", "other", "unclear",
 ]
 
 
@@ -25,8 +25,15 @@ class ExtractionResult(BaseModel):
     title: str | None = Field(max_length=500)
     description: str | None = Field(max_length=5000)
     price: float | None = Field(ge=0)
+    price_text: str | None = Field(max_length=300)
     currency: Literal["IQD", "USD"] | None
     area_sqm: float | None = Field(ge=0)
+    area_text: str | None = Field(max_length=300)
+    area_donum: float | None = Field(ge=0)
+    negotiable: bool | None
+    installment_available: bool | None
+    down_payment: float | None = Field(ge=0)
+    payment_terms: str | None = Field(max_length=1000)
     bedrooms: int | None = Field(ge=0, le=100)
     bathrooms: int | None = Field(ge=0, le=100)
     city: str | None = Field(max_length=100)
@@ -39,7 +46,7 @@ class ExtractionResult(BaseModel):
     needs_review: bool
     review_notes: list[str] = Field(max_length=20)
 
-    @field_validator("title", "description", "city", "district", "complex_name", "floor")
+    @field_validator("title", "description", "price_text", "area_text", "payment_terms", "city", "district", "complex_name", "floor")
     @classmethod
     def blank_to_none(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None

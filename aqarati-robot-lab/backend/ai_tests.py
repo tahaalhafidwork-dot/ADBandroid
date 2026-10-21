@@ -24,6 +24,7 @@ from .processing.prompt import build_prompt
 from .processing.schemas import OutputParseError, parse_extraction_output
 from .providers.base import AIProvider, ProviderFailure, ProviderRequest, ProviderResponse
 from .providers.kilo import KiloProvider, validate_kilo_base_url
+from .providers.local import LocalOpenAIProvider, validate_local_base_url
 from .schemas import AITestPreviewRequest, AITestReviewRequest, AITestRunRequest
 
 router = APIRouter(prefix="/api/ai-tests", tags=["ai-test-lab"])
@@ -40,9 +41,11 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _provider_factory(config: AIProviderConfig, api_key: str) -> AIProvider:
-    if config.provider_key != "kilo":
-        raise ValueError("only the Kilo provider is supported in phase 3B")
-    return KiloProvider(config.api_base_url, api_key)
+    if config.provider_key == "kilo":
+        return KiloProvider(config.api_base_url, api_key)
+    if config.provider_key in {"ollama", "openvino"}:
+        return LocalOpenAIProvider(config.api_base_url, config.provider_key)
+    raise ValueError("unsupported AI provider")
 
 
 def get_ai_provider_factory() -> Callable[[AIProviderConfig, str], AIProvider]:
@@ -57,15 +60,15 @@ def _approved_terms(session: Session) -> list[dict[str, str]]:
     return [{"term": row.term, "meaning": row.meaning, "context": row.context or ""} for row in rows]
 
 
-def _load_subject(session: Session, post_id: int) -> tuple[SourcePost, AIProviderConfig, str, list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
+def _load_subject(session: Session, post_id: int, provider_key: str = "kilo") -> tuple[SourcePost, AIProviderConfig, str, list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
     post = session.get(SourcePost, post_id)
     if not post:
         raise HTTPException(404, "المنشور غير موجود")
     if not post.original_text or not post.original_text.strip():
         raise HTTPException(422, "النص الأصلي غير متوفر؛ لا يمكن تشغيل الاختبار")
-    provider = session.scalar(select(AIProviderConfig).where(AIProviderConfig.provider_key == "kilo"))
+    provider = session.scalar(select(AIProviderConfig).where(AIProviderConfig.provider_key == provider_key))
     if not provider:
-        raise HTTPException(409, "إعداد Kilo غير موجود")
+        raise HTTPException(409, "إعداد المزود غير موجود")
     redacted = redact_personal_data(post.original_text)
     terms = _approved_terms(session)
     messages, prompt_snapshot = build_prompt(redacted, terms)
@@ -89,23 +92,27 @@ def _load_subject(session: Session, post_id: int) -> tuple[SourcePost, AIProvide
 
 def _guards(provider: AIProviderConfig) -> list[dict[str, Any]]:
     settings = Settings.load()
-    key_present = bool(os.environ.get("KILO_API_KEY", "").strip())
     model_name = (provider.model_name or "").strip()
-    is_explicitly_free = model_name == "kilo-auto/free" or model_name.endswith(":free")
     checks = [
-        ("provider_enabled", provider.is_enabled, "مزود Kilo مفعّل"),
-        ("cloud_test_switch", settings.enable_cloud_ai_test, "إذن اختبار السحابة مفعّل"),
-        ("online_mode", not settings.offline, "وضع عدم الاتصال معطّل"),
-        ("credential_present", key_present, "مفتاح KILO_API_KEY موجود في البيئة"),
+        ("provider_enabled", provider.is_enabled, "المزود مفعّل"),
         ("model_selected", bool(provider.model_name and provider.model_name.strip()), "تم اختيار نموذج"),
-        ("free_model_policy", is_explicitly_free, "النموذج مجاني صراحة وفق سياسة 3B"),
     ]
-    try:
-        validate_kilo_base_url(provider.api_base_url)
-        url_valid = True
-    except ValueError:
-        url_valid = False
-    checks.append(("official_endpoint", url_valid, "عنوان Kilo رسمي وآمن"))
+    if provider.operation_mode == "cloud":
+        key_present = bool(os.environ.get("KILO_API_KEY", "").strip())
+        is_explicitly_free = model_name == "kilo-auto/free" or model_name.endswith(":free")
+        checks.extend([
+            ("cloud_test_switch", settings.enable_cloud_ai_test, "إذن اختبار السحابة مفعّل"),
+            ("online_mode", not settings.offline, "وضع عدم الاتصال معطّل"),
+            ("credential_present", key_present, "مفتاح KILO_API_KEY موجود في البيئة"),
+            ("free_model_policy", is_explicitly_free, "النموذج مجاني صراحة وفق السياسة"),
+        ])
+        try: validate_kilo_base_url(provider.api_base_url); url_valid = True
+        except ValueError: url_valid = False
+        checks.append(("official_endpoint", url_valid, "عنوان Kilo رسمي وآمن"))
+    else:
+        try: validate_local_base_url(provider.api_base_url); url_valid = True
+        except ValueError: url_valid = False
+        checks.append(("loopback_endpoint", url_valid, "عنوان المزود محلي loopback"))
     return [{"key": key, "ok": bool(ok), "label": label} for key, ok, label in checks]
 
 
@@ -162,7 +169,7 @@ def _purge_expired_raw_responses(session: Session) -> None:
 
 @router.post("/preview")
 def preview(payload: AITestPreviewRequest, session: Session = Depends(get_session)):
-    post, provider, redacted, _messages, _snapshot, extra = _load_subject(session, payload.post_id)
+    post, provider, redacted, _messages, _snapshot, extra = _load_subject(session, payload.post_id, payload.provider_key)
     guards = _guards(provider)
     return {
         "post_id": post.id,
@@ -172,12 +179,16 @@ def preview(payload: AITestPreviewRequest, session: Session = Depends(get_sessio
         "provider": {"id": provider.id, "name": provider.display_name, "model": provider.model_name},
         "guards": guards,
         "ready": all(item["ok"] for item in guards),
-        "warnings": [
+        "warnings": ([
             "سيُرسل النص المنقح إلى مزود سحابي خارجي بعد التأكيد فقط.",
             "قد يوجّه kilo-auto/free الطلب إلى مزود يحتفظ بالمدخلات والمخرجات؛ لا ترسل بيانات شخصية أو سرية.",
             "التكلفة قبل الطلب غير مؤكدة، ولن تعرض كصفر ما لم يؤكدها رد المزود.",
             "لا تُرسل الصور أو رابط المصدر أو النص الأصلي.",
-        ],
+        ] if provider.operation_mode == "cloud" else [
+            "سيُرسل النص المنقح إلى خادم محلي على loopback فقط.",
+            "لن يبدأ المختبر الخادم المحلي ولن ينزّل نموذجًا.",
+            "لا تُرسل الصور أو رابط المصدر أو النص الأصلي.",
+        ]),
     }
 
 
@@ -186,12 +197,12 @@ def _assert_run_allowed(session: Session, provider: AIProviderConfig, payload: A
     failed = [item["label"] for item in guards if not item["ok"]]
     if failed:
         raise HTTPException(409, "تعذر التشغيل: " + "، ".join(failed))
-    if not (payload.confirmed_external_send and payload.accepted_data_handling and payload.accepted_unknown_cost):
+    if provider.operation_mode == "cloud" and not (payload.confirmed_external_send and payload.accepted_data_handling and payload.accepted_unknown_cost):
         raise HTTPException(422, "يلزم تأكيد الإرسال الخارجي وسياسة البيانات وعدم يقين التكلفة")
     count = session.scalar(select(func.count(AITestRun.id)).where(AITestRun.provider_config_id == provider.id)) or 0
     if provider.request_limit is not None and count >= provider.request_limit:
         raise HTTPException(409, "تم بلوغ حد الطلبات المضبوط للمزود")
-    return os.environ["KILO_API_KEY"]
+    return os.environ["KILO_API_KEY"] if provider.operation_mode == "cloud" else ""
 
 
 def _latest_metric(session: Session, provider_id: int) -> ProviderRuntimeMetric | None:
@@ -246,7 +257,7 @@ def run_test(
         if existing.source_post_id != payload.post_id:
             raise HTTPException(409, "مفتاح منع التكرار مستخدم لمنشور آخر")
         return _run_dict(existing)
-    post, provider, redacted, messages, snapshot, extra = _load_subject(session, payload.post_id)
+    post, provider, redacted, messages, snapshot, extra = _load_subject(session, payload.post_id, payload.provider_key)
     if payload.preview_fingerprint != extra["fingerprint"]:
         raise HTTPException(409, "المعاينة قديمة؛ أعد المعاينة قبل التشغيل")
     api_key = _assert_run_allowed(session, provider, payload)

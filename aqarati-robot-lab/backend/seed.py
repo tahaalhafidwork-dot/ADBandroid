@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import AIProviderConfig, DialectTerm
+from .models import AIProviderConfig, AqaratiIntegrationConfig, DialectTerm
 
 SEED_TERMS = (
     ("طابو", "سند ملكية العقار", "الملكية والتسجيل"),
@@ -39,3 +39,8 @@ def seed_provider_configs(session: Session) -> None:
 def seed_reference_data(session: Session) -> None:
     seed_dialect_terms(session)
     seed_provider_configs(session)
+    if session.get(AqaratiIntegrationConfig, 1) is None:
+        session.add(AqaratiIntegrationConfig(
+            id=1, service_identity="Aqarati Robot", draft_path="/api/robot/drafts",
+            is_enabled=False, connection_status="not_tested",
+        ))

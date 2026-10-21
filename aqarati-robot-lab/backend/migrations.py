@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from . import paths
 
-EXPECTED_REVISION = "20261021_03"
+EXPECTED_REVISION = "20261021_04"
 
 
 def backup_database(database_path: Path) -> Path | None:

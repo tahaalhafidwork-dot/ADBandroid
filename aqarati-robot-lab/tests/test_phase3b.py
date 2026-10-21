@@ -28,7 +28,9 @@ from backend.seed import seed_provider_configs
 def result_payload(**changes):
     value = {
         "category": "for_sale", "property_type": "apartment", "title": "شقة للبيع",
-        "description": None, "price": 125000, "currency": "USD", "area_sqm": 140,
+        "description": None, "price": 125000, "price_text": "125000 USD", "currency": "USD", "area_sqm": 140,
+        "area_text": "140 متر", "area_donum": None, "negotiable": None,
+        "installment_available": None, "down_payment": None, "payment_terms": None,
         "bedrooms": 3, "bathrooms": 2, "city": "بغداد", "district": "المنصور",
         "complex_name": None, "floor": None, "furnished": None, "confidence": 0.91,
         "uncertain_fields": [], "needs_review": False, "review_notes": [],
