@@ -109,7 +109,8 @@ class TestProviderAndMonitoringAPI:
         assert "api_key" not in json.dumps(self.client.get("/openapi.json").json()).lower()
 
     def test_provider_validation_and_secret_rejection(self):
-        provider_id = self.client.get("/api/models/providers").json()[0]["id"]
+        providers = self.client.get("/api/models/providers").json()
+        provider_id = providers[0]["id"]
         secret = self.client.patch(
             f"/api/models/providers/{provider_id}", json={"api_key": "must-not-be-stored"}
         )
@@ -119,8 +120,9 @@ class TestProviderAndMonitoringAPI:
             json={"operation_mode": "local", "api_base_url": "https://remote.example"},
         )
         assert unsafe.status_code == 422
+        model_free_provider = next(row for row in providers if row["provider_key"] == "ollama")
         missing_model = self.client.patch(
-            f"/api/models/providers/{provider_id}", json={"is_enabled": True}
+            f"/api/models/providers/{model_free_provider['id']}", json={"is_enabled": True}
         )
         assert missing_model.status_code == 422
 

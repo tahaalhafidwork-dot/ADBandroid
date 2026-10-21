@@ -127,3 +127,36 @@ class ProviderSettingsPatch(BaseModel):
         if value is None:
             return value
         return ProviderSettings.validate_api_url(value)
+
+
+class AITestPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    post_id: int = Field(gt=0)
+
+
+class AITestRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    post_id: int = Field(gt=0)
+    preview_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    idempotency_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
+    confirmed_external_send: bool
+    accepted_data_handling: bool
+    accepted_unknown_cost: bool
+
+
+class AITestReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["accept_for_test", "reject", "note", "suggest_term"]
+    note: str | None = Field(default=None, max_length=4000)
+    suggested_term: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_action_value(self):
+        if self.action == "note" and not (self.note and self.note.strip()):
+            raise ValueError("الملاحظة مطلوبة لهذا الإجراء")
+        if self.action == "suggest_term" and not (self.suggested_term and self.suggested_term.strip()):
+            raise ValueError("المصطلح المقترح مطلوب")
+        return self

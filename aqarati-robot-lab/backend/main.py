@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api import router
+from .ai_tests import router as ai_tests_router
 from .database import initialize_database
 
 def _local_origin(host: str) -> str:
@@ -53,3 +54,4 @@ async def local_origin_guard(request: Request, call_next):
 
 
 app.include_router(router)
+app.include_router(ai_tests_router)

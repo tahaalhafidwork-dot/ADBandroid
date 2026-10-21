@@ -16,7 +16,7 @@ SEED_TERMS = (
 )
 
 PROVIDER_SEEDS = (
-    {"provider_key": "kilo", "display_name": "Kilo AI Gateway", "api_base_url": "https://api.kilo.ai", "operation_mode": "cloud"},
+    {"provider_key": "kilo", "display_name": "Kilo AI Gateway", "api_base_url": "https://api.kilo.ai/api/gateway", "model_name": "kilo-auto/free", "operation_mode": "cloud", "max_tokens": 1800, "cost_cap": 0},
     {"provider_key": "ollama", "display_name": "Ollama", "api_base_url": "http://127.0.0.1:11434", "operation_mode": "local"},
     {"provider_key": "openvino", "display_name": "OpenVINO", "api_base_url": "http://127.0.0.1:8001", "operation_mode": "local"},
 )

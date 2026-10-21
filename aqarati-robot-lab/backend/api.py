@@ -51,8 +51,10 @@ def _listing_dict(item: ListingDraft) -> dict[str, Any]:
 @router.get("/health", tags=["system"])
 def health(session: Session = Depends(get_session)):
     session.execute(select(1))
-    return {"status": "ok", "database": "connected", "offline": True,
-            "host": "127.0.0.1", "port": Settings.load().backend_port}
+    settings = Settings.load()
+    return {"status": "ok", "database": "connected", "offline": settings.offline,
+            "cloud_ai_test_enabled": settings.enable_cloud_ai_test,
+            "host": "127.0.0.1", "port": settings.backend_port}
 
 
 @router.get("/dashboard", tags=["dashboard"])

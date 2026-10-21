@@ -75,6 +75,7 @@ class Settings:
     database_path: Path
     allow_pii_import: bool
     offline: bool
+    enable_cloud_ai_test: bool
     backend_port: int
 
     @classmethod
@@ -92,6 +93,9 @@ class Settings:
             allow_pii_import=_env_flag("ALLOW_PII_IMPORT", False),
             # The lab never talks to a paid service during scaffolding.
             offline=_env_flag("OFFLINE", True),
+            # Separate kill switch: an operator must opt in immediately before
+            # the single-post cloud experiment. It defaults to disabled.
+            enable_cloud_ai_test=_env_flag("ENABLE_CLOUD_AI_TEST", False),
             backend_port=_env_port("BACKEND_PORT", 8000),
         )
 
@@ -112,5 +116,6 @@ class Settings:
             "database_path": paths.relative_to_repo(self.database_path),
             "allow_pii_import": self.allow_pii_import,
             "offline": self.offline,
+            "enable_cloud_ai_test": self.enable_cloud_ai_test,
             "backend_port": self.backend_port,
         }

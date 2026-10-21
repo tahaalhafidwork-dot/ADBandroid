@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -146,6 +146,7 @@ class AIProviderConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     runtime_metrics: Mapped[list["ProviderRuntimeMetric"]] = relationship(back_populates="provider")
+    test_runs: Mapped[list["AITestRun"]] = relationship(back_populates="provider")
 
 
 class ProviderRuntimeMetric(Base):
@@ -163,6 +164,72 @@ class ProviderRuntimeMetric(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     provider: Mapped[AIProviderConfig] = relationship(back_populates="runtime_metrics")
+
+
+class AITestRun(Base):
+    """Immutable result of one explicitly confirmed single-post experiment."""
+
+    __tablename__ = "ai_test_runs"
+    __table_args__ = (
+        Index(
+            "uq_ai_test_one_active",
+            "active_slot",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'running')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("source_posts.id"), index=True)
+    provider_config_id: Mapped[int] = mapped_column(ForeignKey("ai_provider_configs.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    preview_fingerprint: Mapped[str] = mapped_column(String(64))
+    active_slot: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    requested_model: Mapped[str] = mapped_column(String(200))
+    actual_model: Mapped[str | None] = mapped_column(String(200))
+    confirmed_external_send: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepted_data_handling: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepted_unknown_cost: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    finish_reason: Mapped[str | None] = mapped_column(String(100))
+    json_status: Mapped[str] = mapped_column(String(30), default="not_checked")
+    schema_status: Mapped[str] = mapped_column(String(30), default="not_checked")
+    failure_type: Mapped[str | None] = mapped_column(String(100))
+    failure_message: Mapped[str | None] = mapped_column(Text)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    actual_cost: Mapped[float | None] = mapped_column(Float)
+    cost_currency: Mapped[str | None] = mapped_column(String(10))
+    cost_status: Mapped[str] = mapped_column(String(30), default="unavailable")
+    extracted_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    prompt_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    redacted_input: Mapped[str] = mapped_column(Text)
+    raw_response_redacted: Mapped[str | None] = mapped_column(Text)
+    raw_response_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_status: Mapped[str] = mapped_column(String(30), default="unreviewed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    source_post: Mapped[SourcePost] = relationship()
+    provider: Mapped[AIProviderConfig] = relationship(back_populates="test_runs")
+    reviews: Mapped[list["AITestReview"]] = relationship(back_populates="test_run")
+
+
+class AITestReview(Base):
+    __tablename__ = "ai_test_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ai_test_run_id: Mapped[int] = mapped_column(ForeignKey("ai_test_runs.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    note: Mapped[str | None] = mapped_column(Text)
+    suggested_term: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    test_run: Mapped[AITestRun] = relationship(back_populates="reviews")
 
 
 class DialectTerm(Base):
