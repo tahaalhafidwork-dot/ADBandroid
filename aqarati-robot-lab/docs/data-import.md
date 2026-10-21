@@ -1,82 +1,30 @@
 # استيراد البيانات القديمة
 
-البيانات القديمة موجودة في مشاريع أخرى داخل المستودع. المبدأ: **لا تُعدّل المصدر أبداً**.
+يوجد مستويان منفصلان:
 
-## الوضعان
+1. `backend/legacy_import.py`: نسخ/مرجعة ملفات تجارب قديمة من دون تعديل الأصل، وهي آلية المرحلة الأولى.
+2. `backend/import_service.py`: قراءة JSON المسموح وتحويل محتواه إلى الجداول المنظمة، وهي آلية لوحة المرحلة الثانية.
 
-| الوضع | السلوك | متى يُستخدم |
-|---|---|---|
-| `copy` | نسخ Payload إلى `data/legacy/<label>/` مع تسجيل البصمة | العمل على نسخة مستقلة داخل المشروع |
-| `reference` | لا نسخ؛ تسجيل مرجع في `data/imports/manifest.json` | إبقاء المصدر كمرجع وحسب |
+## المصادر المسموحة
 
-## الاستخدام
+واجهة API لا تقبل مسارًا حرًا. القيمة المقبولة هي `aqarati_50_results.json` (مع دعم اسم النسخة المحلية القديمة بلا امتداد). يبحث النظام داخل `data/legacy/` أولًا، ثم في المصدر التاريخي المحدد للقراءة فقط.
 
-```bash
-cd aqarati-robot-lab
+## الأشكال المدعومة
 
-# عرض المصادر المتاحة
-python scripts/import_legacy_data.py --list
+- كائن يحتوي `structured_listings` و`rejected_posts` و`duplicates` و`stats`.
+- كائن قديم يحتوي `listings` أو `results`، مع `rejected` اختياريًا.
+- قائمة سجلات مباشرة.
 
-# نسخ ملف واحد
-python scripts/import_legacy_data.py \
-    --source real_estate_ai_pipeline/output/aqarati_50_results.json \
-    --mode copy --name aqarati_50_results
+يجب أن تكون مجموعات السجلات قوائم، وإلا يُرفض الملف برسالة 422. الحد الأعلى 25 MiB، والترميز UTF-8/UTF-8-BOM.
 
-# مرجع لمجلد كامل دون نسخ
-python scripts/import_legacy_data.py \
-    --source real_estate_ai_pipeline/output \
-    --mode reference
-```
+## منع التكرار والتدقيق
 
-## الضوابط المطبَّقة
+- بصمة ملف SHA-256 فريدة في `import_batches` تمنع إعادة الدفعة.
+- بصمة مصدر مستقلة لكل منشور تمنع تكرار السجل عبر الدفعات.
+- العناصر المكررة محفوظة في `source_posts` ومعلّمة، ولا تنشئ `listing_drafts` إضافية.
+- `import_batches` يحتفظ بأعداد المقبول والمرفوض والمكرر وأسباب الرفض.
+- `processing_jobs` و`processing_attempts` و`system_events` يحتفظون بتاريخ التشغيل من دون نسخ النص الشخصي في رسائل الأخطاء.
 
-1. **المصدر للقراءة فقط.** يُفتح بـ `"rb"` فقط، ويُمرَّر على `paths.ensure_read_only_source()`
-   الذي يرفض أي مصدر يقع داخل جذر المشروع.
-2. **تجميد المصدر.** تُحسب بصمة SHA-256 لكل ملف قبل الاستيراد وبعده، وتُلغى العملية
-   إن تغيّر أي ملف.
-3. **البيانات الشخصية تُتجاهل.** الملفات التي أسماؤها تحتوي `ground_truth` أو `contact`
-   أو `phone` أو `secret` أو `credentials` أو `.env` لا تُستورد إلا مع `--allow-pii` الصريح.
-4. **السجل بلا مسارات مطلقة.** `data/imports/manifest.json` يحتوي على مسارات نسبية لجذر
-   المستودع فقط، و`write_manifest()` يرفض أي سجل يحتوي مساراً مطلقاً.
-5. **الوجهة داخل المشروع فقط.** يُرفض أي مسار وجهة خارج `aqarati-robot-lab/`.
+## الخصوصية
 
-## شكل السجل
-
-```json
-{
-  "version": 1,
-  "imports": [
-    {
-      "imported_at": "2026-10-21T09:00:00+00:00",
-      "mode": "copy",
-      "label": "aqarati_50_results",
-      "entries": [
-        {
-          "source": "real_estate_ai_pipeline/output/aqarati_50_results.json",
-          "destination": "aqarati-robot-lab/data/legacy/aqarati_50_results/aqarati_50_results.json",
-          "mode": "copy",
-          "sha256": "…",
-          "size": 412676,
-          "modified_at": "2026-10-20T12:00:00+00:00",
-          "pii_blocked": false
-        }
-      ],
-      "skipped": []
-    }
-  ]
-}
-```
-
-## المصادر المسموحة (قراءة فقط)
-
-- `real_estate_ai_pipeline/output/`
-- `real_estate_ai_pipeline/data/`
-- `raqi_reverse_engineering/`
-- `evidence/`
-
-أي مصدر خارج هذه القائمة يُرفض ما لم يُمرَّر صراحةً مع تظل قاعدة "لا تعديل المصدر" سارية.
-
-## البيانات المستوردة لا تُرفع إلى Git
-
-محتوى `data/legacy/` و `data/raw/` و `data/processed/` مستبعد في `.gitignore`.
-يُرفع السجل فقط لأنه بيانات وصفية وبلا مسارات مطلقة.
+ملفات `data/legacy/` وقواعد `data/processed/` مستبعدة من Git. لا تُضمّن الاختبارات أي بيانات حقيقية؛ تستخدم روابط ونصوصًا اصطناعية محددة داخل الاختبار.

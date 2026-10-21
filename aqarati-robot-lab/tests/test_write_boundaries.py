@@ -73,7 +73,7 @@ class StaticWriteBoundaryTests(unittest.TestCase):
         self.assertEqual(writers, [GUARDED_MODULE])
 
     def test_no_absolute_path_literals_in_the_code(self):
-        pattern = re.compile(r"[A-Za-z]:[\\/]{1,2}[A-Za-z0-9_.-]+")
+        pattern = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]{1,2}[A-Za-z0-9_.-]+")
         offenders = []
         for path in _scanned_files():
             if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):

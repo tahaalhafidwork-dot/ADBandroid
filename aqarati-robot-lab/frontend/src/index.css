@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+:root { color: #17363d; background: #f4f7f5; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background:
+  radial-gradient(circle at 8% 5%, rgba(239,180,70,.09), transparent 24rem),
+  linear-gradient(145deg, #f8faf8 0%, #eef4f2 100%); }
+button, input, select, textarea { font: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(20,125,121,.24); outline-offset: 2px; }
+@layer components {
+  .card { @apply rounded-2xl border border-slate-200/80 bg-white shadow-soft; }
+  .field { @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm transition focus:border-teal-600; }
+  .btn, .btn-primary, .btn-muted { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45; }
+  .btn-primary { @apply bg-teal-700 text-white hover:bg-teal-800; }
+  .btn-muted { @apply border border-slate-200 bg-white text-slate-700 hover:bg-slate-50; }
+  .badge { @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold; }
+}

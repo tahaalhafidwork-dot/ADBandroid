@@ -169,7 +169,9 @@ def iter_project_files(extensions: Iterable[str] = (".py", ".md", ".json", ".txt
     for path in sorted(PROJECT_ROOT.rglob("*")):
         if not path.is_file():
             continue
-        if any(part in {".git", "__pycache__"} for part in path.parts):
+        if any(part in {".git", "__pycache__", ".pytest_cache", "node_modules", "dist", "build"} for part in path.parts):
+            continue
+        if path.name in {"package-lock.json"}:
             continue
         if path.suffix.lower() in allowed:
             yield path

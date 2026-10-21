@@ -49,7 +49,7 @@ REQUIRED_FILES = (
 )
 
 ABSOLUTE_PATH_PATTERNS = (
-    re.compile(r"[A-Za-z]:[\\/]{1,2}[A-Za-z0-9_.-]+"),
+    re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]{1,2}[A-Za-z0-9_.-]+"),
     re.compile(r"/Users/[A-Za-z0-9_.-]+"),
     re.compile(r"/home/[A-Za-z0-9_.-]+"),
 )
