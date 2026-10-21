@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "imports": [
+    {
+      "imported_at": "2026-10-21T09:18:15.536659+00:00",
+      "mode": "copy",
+      "label": "aqarati_50_results",
+      "entries": [
+        {
+          "source": "real_estate_ai_pipeline/output/aqarati_50_results.json",
+          "destination": "aqarati-robot-lab/data/legacy/aqarati_50_results",
+          "mode": "copy",
+          "sha256": "6bef9454716e5865c46a8d512cd971af9681354cc6ffaad76452fa6c1e060eab",
+          "size": 412676,
+          "modified_at": "2026-10-21T04:45:07.944697+00:00",
+          "pii_blocked": false
+        }
+      ],
+      "skipped": []
+    }
+  ]
+}
