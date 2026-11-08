@@ -112,9 +112,10 @@ private fun FloatingBubble(
         }
 
         // Close button — separate from bubble to avoid triggering drag/expand
+        // Minimum 48dp touch target for accessibility
         Box(
             modifier = Modifier
-                .size(24.dp)
+                .size(48.dp)
                 .background(OverlayTheme.ErrorRed.copy(alpha = 0.8f), CircleShape)
                 .clip(CircleShape)
                 .clickable { onClose() },

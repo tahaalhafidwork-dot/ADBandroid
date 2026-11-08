@@ -111,11 +111,11 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
                         showOverlayPermissionDialog = true
                         overlayPermissionLauncher.launch(Unit)
                     },
-                    onToggleOverlay = {
-                        if (overlayManager.isOverlayVisible()) {
-                            overlayManager.hideOverlay()
-                        } else {
+                    onToggleOverlay = { checked ->
+                        if (checked) {
                             overlayManager.showOverlay()
+                        } else {
+                            overlayManager.hideOverlay()
                         }
                     },
                     modifier = Modifier.padding(padding)
@@ -290,7 +290,7 @@ private fun SettingsPage(
     overlayManager: OverlayManager,
     overlayPermissionGranted: Boolean,
     onRequestPermission: () -> Unit,
-    onToggleOverlay: () -> Unit,
+    onToggleOverlay: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Observe actual overlay visibility from the manager
@@ -378,7 +378,7 @@ private fun SettingsPage(
                     Spacer(modifier = Modifier.width(8.dp))
                     Switch(
                         checked = isOverlayVisible,
-                        onCheckedChange = { onToggleOverlay() },
+                        onCheckedChange = { checked -> onToggleOverlay(checked) },
                         enabled = overlayPermissionGranted
                     )
                 }

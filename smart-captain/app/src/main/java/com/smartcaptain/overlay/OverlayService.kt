@@ -57,6 +57,10 @@ class OverlayService : Service() {
     private var composeView: ComposeView? = null
     private var windowViewAdded = false
 
+    // Accumulated drag offsets for precise positioning (avoids truncation per event)
+    private var accumulatedDragX = 0f
+    private var accumulatedDragY = 0f
+
     /** Ensures all Compose UI mutations happen on the main thread. */
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -148,6 +152,10 @@ class OverlayService : Service() {
                         val view = composeView ?: return@SmartCaptainOverlay
                         val params = view.layoutParams as? LayoutParams ?: return@SmartCaptainOverlay
                         try {
+                            // Accumulate fractional drag amounts for precision
+                            accumulatedDragX += dx
+                            accumulatedDragY += dy
+
                             // Get display metrics for boundary clamping
                             val displayMetrics = resources.displayMetrics
                             val screenWidth = displayMetrics.widthPixels
@@ -157,9 +165,12 @@ class OverlayService : Service() {
                             val overlayWidth = view.width.coerceAtLeast(1)
                             val overlayHeight = view.height.coerceAtLeast(1)
 
-                            // Clamp to usable display area
-                            params.x = (params.x + dx.toInt()).coerceIn(0, (screenWidth - overlayWidth).coerceAtLeast(0))
-                            params.y = (params.y + dy.toInt()).coerceIn(0, (screenHeight - overlayHeight).coerceAtLeast(0))
+                            // Clamp accumulated position to usable display area
+                            val maxX = (screenWidth - overlayWidth).coerceAtLeast(0)
+                            val maxY = (screenHeight - overlayHeight).coerceAtLeast(0)
+
+                            params.x = accumulatedDragX.toInt().coerceIn(0, maxX)
+                            params.y = accumulatedDragY.toInt().coerceIn(0, maxY)
 
                             windowManager.updateViewLayout(view, params)
                         } catch (e: Exception) {
@@ -192,6 +203,9 @@ class OverlayService : Service() {
 
             windowManager.addView(composeView, params)
             windowViewAdded = true
+            // Initialize accumulated drag from initial position
+            accumulatedDragX = params.x.toFloat()
+            accumulatedDragY = params.y.toFloat()
             // Notify OverlayManager that the window is now visible (source of truth)
             OverlayManagerInstance.get()?.onWindowAdded()
             Log.d(TAG, "Overlay bubble added to window successfully")
@@ -221,6 +235,9 @@ class OverlayService : Service() {
         } finally {
             composeView = null
             windowViewAdded = false
+            // Reset accumulated drag offsets
+            accumulatedDragX = 0f
+            accumulatedDragY = 0f
             // Notify OverlayManager that the window is now removed (source of truth)
             OverlayManagerInstance.get()?.onWindowRemoved()
             pipelineListenerRegistration?.invoke()
