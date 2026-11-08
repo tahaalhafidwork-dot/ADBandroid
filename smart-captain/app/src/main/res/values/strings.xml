@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Smart Captain</string>
+    <string name="accessibility_service_description">Baly Captain Integration Accessibility Service - Reads trip offer screens from Baly Captain application</string>
+    <string name="accessibility_connected">الخدمة متصلة</string>
+    <string name="accessibility_enabled_but_disconnected">الخدمة مفعّلة ولكن غير متصلة</string>
+    <string name="accessibility_not_enabled">الخدمة غير مفعّلة</string>
+    <string name="enable_accessibility_service">تفعيل خدمة إمكانية الوصول</string>
+    <string name="overlay_active">النافذة نشطة</string>
+    <string name="overlay_stopped">النافذة متوقفة</string>
+</resources>

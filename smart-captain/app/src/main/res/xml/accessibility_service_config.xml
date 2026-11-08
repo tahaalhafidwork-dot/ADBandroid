@@ -1,0 +1,23 @@
+<resources>
+    <!-- Baly Accessibility Service Configuration -->
+    <!-- 
+      Configures the accessibility service for reading Baly Captain interface.
+      - canRetrieveWindowContent: Allows reading window content (text)
+      - packageNames: Restricts service to only listen to Baly Captain package (VERIFIED: app.baly.driver)
+      - accessibilityEventTypes: All event types to detect trip offer screens
+      - notificationTimeout: 100ms
+    -->
+    <accessibilityservice xmlns:android="http://schemas.android.com/apk/res/android"
+        android:canRetrieveWindowContent="true"
+        android:packageNames="app.baly.driver"
+        android:accessibilityEventTypes="typeAllMask"
+        android:notificationTimeout="100"
+        android:description="@string/accessibility_service_description">
+        <!-- 
+          Added features for Baly integration:
+          - Retrieving window content essential for OCR/text extraction
+          - Package restriction to Baly Captain only
+          - All event types to detect trip offer screens
+        -->
+    </accessibilityservice>
+</resources>

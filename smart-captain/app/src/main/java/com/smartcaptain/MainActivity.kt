@@ -1,8 +1,9 @@
 package com.smartcaptain
 
-import android.app.Activity
 import android.os.Bundle
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -16,9 +17,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.smartcaptain.accessibility.AccessibilityConnectionManager
+import com.smartcaptain.integration.IntegrationStatus
+import com.smartcaptain.integration.TripPipeline
+import com.smartcaptain.overlay.OverlayManager
+import com.smartcaptain.overlay.OverlayManagerInstance
+import kotlinx.coroutines.launch
 
 private val Navy = Color(0xFF101B32)
 private val Blue = Color(0xFF315FE8)
@@ -26,17 +34,41 @@ private val Canvas = Color(0xFFF4F6FA)
 private val Green = Color(0xFF16845B)
 private val Muted = Color(0xFF6B7280)
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
+
+    private lateinit var overlayManager: OverlayManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SmartCaptainApp() }
+
+        // Initialize overlay manager once and register it for state sync
+        overlayManager = OverlayManager(applicationContext)
+        OverlayManagerInstance.set(overlayManager)
+
+        setContent { SmartCaptainApp(overlayManager) }
     }
 }
 
 @Composable
-private fun SmartCaptainApp() {
+private fun SmartCaptainApp(overlayManager: OverlayManager) {
+    val context = LocalContext.current
+
     var automatic by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(0) }
+    var overlayPermissionGranted by remember { mutableStateOf(overlayManager.hasOverlayPermission()) }
+    var showOverlayPermissionDialog by remember { mutableStateOf(false) }
+
+    // Observe accessibility connection state as Compose state
+    val isAccessibilityConnected by AccessibilityConnectionManager.isConnected
+        .collectAsState(initial = false)
+
+    val overlayPermissionLauncher = rememberLauncherForActivityResult(
+        contract = overlayManager.overlayPermissionContract()
+    ) { granted ->
+        overlayPermissionGranted = granted
+        showOverlayPermissionDialog = false
+    }
+
     MaterialTheme(
         colorScheme = lightColorScheme(primary = Blue, background = Canvas, surface = Color.White)
     ) {
@@ -44,7 +76,12 @@ private fun SmartCaptainApp() {
             containerColor = Canvas,
             bottomBar = {
                 NavigationBar(containerColor = Color.White) {
-                    listOf(Icons.Default.Dashboard to "الرئيسية", Icons.Default.Tune to "الإعدادات", Icons.Default.Map to "المناطق", Icons.Default.History to "السجل")
+                    listOf(
+                        Icons.Default.Dashboard to "الرئيسية",
+                        Icons.Default.Tune to "الإعدادات",
+                        Icons.Default.Map to "المناطق",
+                        Icons.Default.History to "السجل"
+                    )
                         .forEachIndexed { index, item ->
                             NavigationBarItem(
                                 selected = tab == index,
@@ -57,17 +94,60 @@ private fun SmartCaptainApp() {
             }
         ) { padding ->
             when (tab) {
-                0 -> Dashboard(automatic, { automatic = it }, Modifier.padding(padding))
-                1 -> SimplePage("الإعدادات", "اضبط الحد الأدنى للكيلومتر، الوقود، وقت الوصول، وقواعد القبول.")
+                0 -> Dashboard(
+                    automatic = automatic,
+                    onMode = { automatic = it },
+                    accessibilityConnected = isAccessibilityConnected,
+                    onOpenAccessibilitySettings = {
+                        AccessibilityConnectionManager.openAccessibilitySettings(context)
+                    },
+                    modifier = Modifier.padding(padding)
+                )
+                1 -> SettingsPage(
+                    overlayManager = overlayManager,
+                    overlayPermissionGranted = overlayPermissionGranted,
+                    onRequestPermission = {
+                        showOverlayPermissionDialog = true
+                        overlayPermissionLauncher.launch(Unit)
+                    },
+                    onToggleOverlay = { overlayManager.toggleOverlay() },
+                    modifier = Modifier.padding(padding)
+                )
                 2 -> SimplePage("المناطق", "أضف مناطق محظورة أو مفضلة على الخريطة بعد إعداد مزود الخرائط.")
                 else -> SimplePage("سجل الرحلات", "ستظهر هنا الرحلات التي تم تحليلها ونتائجها.")
+            }
+
+            // Overlay permission rationale dialog
+            if (showOverlayPermissionDialog) {
+                OverlayPermissionDialog(
+                    onDismiss = { showOverlayPermissionDialog = false },
+                    onGrant = {
+                        showOverlayPermissionDialog = false
+                        overlayPermissionLauncher.launch(Unit)
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun Dashboard(automatic: Boolean, onMode: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+private fun Dashboard(
+    automatic: Boolean,
+    onMode: (Boolean) -> Unit,
+    accessibilityConnected: Boolean,
+    onOpenAccessibilitySettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val integrationStatus by remember {
+        mutableStateOf(
+            IntegrationStatus(
+                balyDetected = true,
+                accessibilityConnected = accessibilityConnected
+            )
+        )
+    }
+
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(22.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -88,11 +168,35 @@ private fun Dashboard(automatic: Boolean, onMode: (Boolean) -> Unit, modifier: M
             Column(Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("حالة المساعد", color = Color.White.copy(alpha = .75f), modifier = Modifier.weight(1f))
-                    Surface(color = Color(0xFF203B60), shape = RoundedCornerShape(50)) {
-                        Text("غير متصل ببلي", color = Color(0xFFBFD4FF), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                    Surface(
+                        color = if (accessibilityConnected) Color(0xFF16845B) else Color(0xFF203B60),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            text = when {
+                                !integrationStatus.balyDetected -> "بلي غير مكتشف"
+                                !accessibilityConnected -> "الخدمة مفعّلة ولكن غير متصلة"
+                                else -> "الخدمة متصلة"
+                            },
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
                     }
                 }
                 Spacer(Modifier.height(18.dp))
+                if (!accessibilityConnected) {
+                    TextButton(
+                        onClick = onOpenAccessibilitySettings,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "تفعيل خدمة إمكانية الوصول",
+                            color = Color(0xFFBFE8D7)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text("جاهز لتحليل الرحلات", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text("فعّل خدمة إمكانية الوصول بعد اكتمال ربط بلي.", color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
                 Spacer(Modifier.height(18.dp))
@@ -169,4 +273,198 @@ private fun SimplePage(title: String, description: String) {
         Spacer(Modifier.height(12.dp))
         Text(description, color = Muted, fontSize = 15.sp, lineHeight = 23.sp)
     }
+}
+
+/**
+ * Settings page with overlay permission controls.
+ */
+@Composable
+private fun SettingsPage(
+    overlayManager: OverlayManager,
+    overlayPermissionGranted: Boolean,
+    onRequestPermission: () -> Unit,
+    onToggleOverlay: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Observe actual overlay visibility from the manager
+    var isOverlayVisible by remember { mutableStateOf(overlayManager.isOverlayVisible()) }
+
+    // Refresh visibility state when the settings page is shown
+    LaunchedEffect(Unit) {
+        isOverlayVisible = overlayManager.isOverlayVisible()
+    }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Top
+    ) {
+        Text(
+            text = "الإعدادات",
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Bold,
+            color = Navy
+        )
+        Spacer(Modifier.height(12.dp))
+
+        // Overlay permission section
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    text = "النافذة العائمة",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Navy,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "تمكين النافذة العائمة لعرض تقييم الرحلات فوق تطبيق بلي.",
+                    color = Muted,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "إذن العرض فوق التطبيقات",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (overlayPermissionGranted) Navy else Muted
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (overlayPermissionGranted) {
+                        Text(
+                            text = "ممنوح",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Green
+                        )
+                    } else {
+                        Text(
+                            text = "غير ممنوح",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFDC2626)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                if (!overlayPermissionGranted) {
+                    TextButton(
+                        onClick = onRequestPermission,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("طلب إذن النافذة العائمة")
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "تشغيل النافذة العائمة",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Navy
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = isOverlayVisible,
+                        onCheckedChange = { if (it) onToggleOverlay() else onToggleOverlay() },
+                        enabled = overlayPermissionGranted
+                    )
+                }
+
+                // Show overlay status text
+                if (overlayPermissionGranted) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isOverlayVisible) "النافذة نشطة" else "النافذة متوقفة",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isOverlayVisible) Green else Muted
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Auto mode section
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "القبول التلقائي",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Navy
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "متوقف افتراضياً",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Muted
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Overlay permission rationale dialog.
+ */
+@Composable
+fun OverlayPermissionDialog(
+    onDismiss: () -> Unit,
+    onGrant: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onGrant) {
+                Text("منح الإذن")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("إلغاء")
+            }
+        },
+        title = {
+            Text(
+                text = "إذن العرض فوق التطبيقات",
+                style = MaterialTheme.typography.titleMedium,
+                color = Navy
+            )
+        },
+        text = {
+            Text(
+                text = "يحتاج Smart Captain إلى إذن " +
+                    "الDisplay over other apps " +
+                    "لعرض النافذة العائمة فوق تطبيق بلي. " +
+                    "سيتم فتح إعدادات النظام لمنح الإذن.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Muted
+            )
+        },
+        modifier = modifier
+    )
 }
