@@ -144,6 +144,14 @@ class OverlayService : Service() {
                     onClose = { stopOverlay() },
                     onCollapse = { _isExpanded.value = false },
                     onExpand = { _isExpanded.value = true },
+                    onDrag = { dx, dy ->
+                        val params = composeView?.layoutParams as? LayoutParams
+                        if (params != null) {
+                            params.x += dx.toInt()
+                            params.y += dy.toInt()
+                            windowManager.updateViewLayout(composeView, params)
+                        }
+                    },
                     isExpanded = _isExpanded.value,
                     evaluation = _currentEvaluation.value,
                     isProcessing = _isProcessing.value

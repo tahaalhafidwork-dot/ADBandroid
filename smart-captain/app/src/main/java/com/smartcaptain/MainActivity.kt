@@ -111,7 +111,13 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
                         showOverlayPermissionDialog = true
                         overlayPermissionLauncher.launch(Unit)
                     },
-                    onToggleOverlay = { overlayManager.toggleOverlay() },
+                    onToggleOverlay = {
+                        if (overlayManager.isOverlayVisible()) {
+                            overlayManager.hideOverlay()
+                        } else {
+                            overlayManager.showOverlay()
+                        }
+                    },
                     modifier = Modifier.padding(padding)
                 )
                 2 -> SimplePage("المناطق", "أضف مناطق محظورة أو مفضلة على الخريطة بعد إعداد مزود الخرائط.")
@@ -372,7 +378,7 @@ private fun SettingsPage(
                     Spacer(modifier = Modifier.width(8.dp))
                     Switch(
                         checked = isOverlayVisible,
-                        onCheckedChange = { if (it) onToggleOverlay() else onToggleOverlay() },
+                        onCheckedChange = { onToggleOverlay() },
                         enabled = overlayPermissionGranted
                     )
                 }

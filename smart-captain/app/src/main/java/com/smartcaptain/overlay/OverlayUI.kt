@@ -5,8 +5,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,9 +17,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import com.smartcaptain.domain.TripDecision
@@ -26,18 +25,22 @@ import com.smartcaptain.domain.TripEvaluation
 /**
  * Composable UI for the Smart Captain floating overlay.
  *
+ * The overlay is rendered inside a WindowManager view with WRAP_CONTENT
+ * for both width and height. Therefore the Compose root must NOT request
+ * screen-sized content (no fillMaxWidth/fillMaxHeight/fillMaxSize).
+ *
  * Provides two states:
  * 1. Bubble — compact circular floating button, draggable across the screen
- * 2. Panel — expanded analysis panel showing trip data
+ * 2. Panel — expanded analysis panel with bounded dimensions
  *
- * The overlay is rendered inside a WindowManager view (MATCH_PARENT) so the
- * bubble can be positioned anywhere on screen via offset.
+ * Drag is handled via [onDrag] callback which updates WindowManager params.
  */
 @Composable
 fun SmartCaptainOverlay(
     onClose: () -> Unit,
     onCollapse: () -> Unit,
     onExpand: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
     isExpanded: Boolean,
     evaluation: TripEvaluation?,
     isProcessing: Boolean,
@@ -45,8 +48,7 @@ fun SmartCaptainOverlay(
 ) {
     Column(
         modifier = modifier
-            .fillMaxWidth()
-            .fillMaxHeight()
+            .wrapContentSize()
             .clipToBounds()
     ) {
         if (isExpanded) {
@@ -55,13 +57,14 @@ fun SmartCaptainOverlay(
                 onCollapse = onCollapse,
                 evaluation = evaluation,
                 isProcessing = isProcessing,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.widthIn(min = 200.dp, max = 320.dp)
             )
         } else {
             FloatingBubble(
                 onClose = onClose,
                 onExpand = onExpand,
-                modifier = Modifier.fillMaxSize()
+                onDrag = onDrag,
+                modifier = Modifier.size(56.dp)
             )
         }
     }
@@ -69,87 +72,41 @@ fun SmartCaptainOverlay(
 
 /**
  * Compact circular floating bubble that stays on top of other apps.
- * Draggable via touch gestures, clamped to screen boundaries.
+ * Draggable via touch gestures. Fixed 56dp diameter.
+ * Drag updates are delegated to [onDrag] which moves the WindowManager.
  */
 @Composable
 private fun FloatingBubble(
     onClose: () -> Unit,
     onExpand: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val density = LocalDensity.current
-    val config = LocalConfiguration.current
-    val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
-    val screenHeightPx = with(density) { config.screenHeightDp.dp.toPx() }
-    val bubbleDiameterPx = with(density) { 56f.dp.toPx() }
-
-    var offset by remember { mutableStateOf(Offset(50f, 200f)) }
-
     Box(
         modifier = modifier
+            .background(OverlayTheme.BubbleBackground, CircleShape)
+            .clip(CircleShape)
+            .clickable { onExpand() }
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
-                    offset = Offset(
-                        (offset.x + dragAmount.x).coerceIn(
-                            0f,
-                            (screenWidthPx - bubbleDiameterPx).coerceAtLeast(0f)
-                        ),
-                        (offset.y + dragAmount.y).coerceIn(
-                            0f,
-                            (screenHeightPx - bubbleDiameterPx).coerceAtLeast(0f)
-                        )
-                    )
+                    onDrag(dragAmount.x, dragAmount.y)
                 }
-            }
+            },
+        contentAlignment = Alignment.Center
     ) {
-        // Bubble
-        Box(
-            modifier = Modifier
-                .offset {
-                    IntOffset(offset.x.toInt(), offset.y.toInt())
-                }
-                .size(56.dp)
-                .background(OverlayTheme.BubbleBackground, CircleShape)
-                .clip(CircleShape)
-                .clickable { onExpand() }
-                .padding(4.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "S",
-                color = OverlayTheme.BubbleIcon,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        // Close button positioned just below-right of the bubble
-        Box(
-            modifier = Modifier
-                .offset {
-                    IntOffset(
-                        (offset.x + bubbleDiameterPx / 2f).toInt(),
-                        (offset.y + bubbleDiameterPx + 4f).toInt()
-                    )
-                }
-        ) {
-            Button(
-                onClick = onClose,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            ) {
-                Text(
-                    text = "✕",
-                    color = OverlayTheme.TextMuted,
-                    fontSize = 14.sp
-                )
-            }
-        }
+        Text(
+            text = "S",
+            color = OverlayTheme.BubbleIcon,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
 /**
  * Expanded analysis panel showing trip details and evaluation.
+ * Bounded width (200-320dp) and max height 400dp with vertical scroll.
  */
 @Composable
 private fun AnalysisPanel(
@@ -161,6 +118,8 @@ private fun AnalysisPanel(
 ) {
     Column(
         modifier = modifier
+            .heightIn(min = 100.dp, max = 400.dp)
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
             .background(OverlayTheme.SurfaceCard)
             .clip(RoundedCornerShape(16.dp))
