@@ -26,6 +26,7 @@ import com.smartcaptain.integration.IntegrationStatus
 import com.smartcaptain.integration.TripPipeline
 import com.smartcaptain.overlay.OverlayManager
 import com.smartcaptain.overlay.OverlayManagerInstance
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.launch
 
 private val Navy = Color(0xFF101B32)
@@ -287,12 +288,7 @@ private fun SettingsPage(
     modifier: Modifier = Modifier
 ) {
     // Observe actual overlay visibility from the manager
-    var isOverlayVisible by remember { mutableStateOf(overlayManager.isOverlayVisible()) }
-
-    // Refresh visibility state when the settings page is shown
-    LaunchedEffect(Unit) {
-        isOverlayVisible = overlayManager.isOverlayVisible()
-    }
+    val isOverlayVisible by overlayManager.overlayVisible.collectAsState(initial = false)
 
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp),

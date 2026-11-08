@@ -6,17 +6,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import com.smartcaptain.domain.DriverSettings
@@ -35,8 +34,6 @@ import com.smartcaptain.integration.TripPipeline
  *
  * Architecture:
  *   BalyAccessibilityService → BalyPlatformAdapter → TripOffer → TripPipeline → TripEvaluator → OverlayService
- *
- * The overlay observes TripPipeline evaluations and updates the panel automatically.
  *
  * Permissions:
  *   - SYSTEM_ALERT_WINDOW (must be granted by user via Settings)
@@ -57,7 +54,7 @@ class OverlayService : Service() {
     private val CHANNEL_NAME = "Smart Captain Overlay"
 
     private lateinit var windowManager: WindowManager
-    private lateinit var composeView: ComposeView
+    private var composeView: ComposeView? = null
     private var windowViewAdded = false
 
     /** Ensures all Compose UI mutations happen on the main thread. */
@@ -83,23 +80,26 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "OverlayService start command received: action=${intent?.action}")
+        val action = intent?.action
+        Log.d(TAG, "OverlayService start command received: action=$action")
 
         // Start as foreground service so the overlay remains visible
         // when Smart Captain is in the background and Baly is in the foreground.
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        if (intent != null && intent.action == "com.smartcaptain.action.TOGGLE_OVERLAY") {
-            if (windowViewAdded) {
-                stopOverlay()
-            } else {
-                startOverlay()
+        when (action) {
+            ACTION_TOGGLE_OVERLAY -> {
+                if (windowViewAdded) {
+                    stopOverlay()
+                } else {
+                    startOverlay()
+                }
             }
-        } else if (intent != null && intent.action == "com.smartcaptain.action.STOP_OVERLAY") {
-            stopOverlay()
-            stopSelf(startId)
-        } else {
-            startOverlay()
+            ACTION_STOP_OVERLAY -> {
+                stopOverlay()
+                stopSelf(startId)
+            }
+            else -> startOverlay()
         }
         return START_NOT_STICKY
     }
@@ -121,6 +121,12 @@ class OverlayService : Service() {
             return
         }
 
+        // Verify overlay permission before attempting to add the window
+        if (!Settings.canDrawOverlays(this)) {
+            Log.e(TAG, "Cannot start overlay: SYSTEM_ALERT_WINDOW permission not granted")
+            return
+        }
+
         // Register pipeline listener to receive live evaluations.
         // All state mutations are posted to the main thread for Compose safety.
         pipelineListenerRegistration = TripPipeline.registerEvaluationListener { evaluation ->
@@ -130,10 +136,10 @@ class OverlayService : Service() {
             }
         }
 
-        // Initialize Compose UI on the main thread.
-        mainHandler.post {
+        // Initialize Compose UI and add to window on the main thread
+        try {
             composeView = ComposeView(this@OverlayService)
-            composeView.setContent {
+            composeView?.setContent {
                 SmartCaptainOverlay(
                     onClose = { stopOverlay() },
                     onCollapse = { _isExpanded.value = false },
@@ -145,6 +151,9 @@ class OverlayService : Service() {
             }
 
             // WindowManager params for floating overlay
+            // Use WRAP_CONTENT so the window only covers the bubble area, not the entire screen.
+            // Positioning is handled via params.x / params.y rather than Compose offset(),
+            // so the window itself stays compact and doesn't interfere with underlying apps.
             val params = LayoutParams().apply {
                 type = LayoutParams.TYPE_APPLICATION_OVERLAY
                 flags = LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -155,38 +164,43 @@ class OverlayService : Service() {
                 gravity = Gravity.TOP or Gravity.START
                 x = 50
                 y = 200
-                width = LayoutParams.MATCH_PARENT
-                height = LayoutParams.MATCH_PARENT
+                width = LayoutParams.WRAP_CONTENT
+                height = LayoutParams.WRAP_CONTENT
             }
 
-            try {
-                windowManager.addView(composeView, params)
-                windowViewAdded = true
-                // Notify OverlayManager that the window is now visible
-                OverlayManagerInstance.get()?.onWindowAdded()
-                Log.d(TAG, "Overlay bubble added to window")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to add overlay view", e)
-                pipelineListenerRegistration?.invoke()
-                pipelineListenerRegistration = null
-            }
+            windowManager.addView(composeView, params)
+            windowViewAdded = true
+            // Notify OverlayManager that the window is now visible (source of truth)
+            OverlayManagerInstance.get()?.onWindowAdded()
+            Log.d(TAG, "Overlay bubble added to window successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add overlay view", e)
+            composeView = null
+            pipelineListenerRegistration?.invoke()
+            pipelineListenerRegistration = null
+            throw e
         }
     }
 
     /** Hides and removes the floating overlay. */
     private fun stopOverlay() {
-        if (!windowViewAdded) return
-        mainHandler.post {
-            if (!windowViewAdded) return@post
-            try {
-                windowManager.removeView(composeView)
-                windowViewAdded = false
-                // Notify OverlayManager that the window is now removed
-                OverlayManagerInstance.get()?.onWindowRemoved()
+        if (!windowViewAdded) {
+            Log.d(TAG, "Overlay not visible, nothing to stop")
+            return
+        }
+
+        try {
+            composeView?.let { view ->
+                windowManager.removeView(view)
                 Log.d(TAG, "Overlay removed from window")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to remove overlay view", e)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove overlay view", e)
+        } finally {
+            composeView = null
+            windowViewAdded = false
+            // Notify OverlayManager that the window is now removed (source of truth)
+            OverlayManagerInstance.get()?.onWindowRemoved()
             pipelineListenerRegistration?.invoke()
             pipelineListenerRegistration = null
             _isExpanded.value = false

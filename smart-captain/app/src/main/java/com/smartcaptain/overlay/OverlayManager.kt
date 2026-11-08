@@ -1,6 +1,5 @@
 package com.smartcaptain.overlay
 
-import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -8,6 +7,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContract
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import com.smartcaptain.domain.DriverSettings
 import com.smartcaptain.domain.TripEvaluation
 import com.smartcaptain.domain.TripOffer
@@ -18,22 +19,23 @@ import com.smartcaptain.integration.TripPipeline
  * OverlayManager coordinates the floating overlay lifecycle and integrates
  * with TripPipeline for live offer updates.
  *
- * The overlay visibility state is tracked as a [MutableStateFlow] so that UI
- * components can observe the actual service/window state rather than a local
- * boolean that may drift out of sync.
+ * The overlay visibility state tracks the ACTUAL WindowManager state — it is
+ * only updated by OverlayService via onWindowAdded()/onWindowRemoved(), never
+ * optimistically in showOverlay()/hideOverlay().
  *
  * Usage from MainActivity or settings screen:
  *   val overlayManager = OverlayManager(context)
- *   overlayManager.overlayVisible.collect { visible -> ... }
+ *   overlayManager.overlayVisible.observe { visible -> ... }
  *   overlayManager.showOverlay()  // requires overlay permission
  */
 class OverlayManager(private val context: Context) {
 
     private val permissionHelper = OverlayPermissionHelper
 
-    /** Tracks whether the overlay window is currently added to WindowManager. */
-    private val _overlayVisible = androidx.lifecycle.MutableLiveData<Boolean>(false)
-    val overlayVisible: androidx.lifecycle.LiveData<Boolean> = _overlayVisible
+    /** Tracks whether the overlay window is currently added to WindowManager.
+     *  This is the source of truth — updated only by OverlayService callbacks. */
+    private val _overlayVisible = MutableStateFlow(false)
+    val overlayVisible: StateFlow<Boolean> = _overlayVisible
 
     /**
      * Whether the overlay permission is currently granted.
@@ -42,7 +44,7 @@ class OverlayManager(private val context: Context) {
         permissionHelper.hasOverlayPermission(context)
 
     /**
-     * Whether the overlay window is currently visible.
+     * Whether the overlay window is currently visible (source of truth from WindowManager).
      */
     fun isOverlayVisible(): Boolean = _overlayVisible.value == true
 
@@ -54,21 +56,31 @@ class OverlayManager(private val context: Context) {
 
     /**
      * Starts the floating overlay service.
-     * Caller should verify hasOverlayPermission() == true before calling.
+     * Verifies overlay permission before starting; returns without action if not granted.
      */
     fun showOverlay() {
-        if (isOverlayVisible()) return
-        _overlayVisible.value = true
+        if (!hasOverlayPermission()) {
+            LogUtil.w("OverlayManager", "Cannot show overlay: SYSTEM_ALERT_WINDOW permission not granted")
+            return
+        }
+        if (isOverlayVisible()) {
+            LogUtil.d("OverlayManager", "Overlay already visible")
+            return
+        }
+        // Do NOT set _overlayVisible optimistically — wait for onWindowAdded() callback
         context.startService(OverlayService.createStartIntent(context))
     }
 
     /**
      * Stops the floating overlay service.
      * Only stops OverlayService — does not affect the host Activity.
+     * Does NOT set _overlayVisible optimistically — waits for onWindowRemoved().
      */
     fun hideOverlay() {
-        if (!isOverlayVisible()) return
-        _overlayVisible.value = false
+        if (!isOverlayVisible()) {
+            LogUtil.d("OverlayManager", "Overlay already hidden")
+            return
+        }
         context.stopService(OverlayService.createStopIntent(context))
     }
 
@@ -85,7 +97,7 @@ class OverlayManager(private val context: Context) {
 
     /**
      * Called by OverlayService when the window view is successfully added.
-     * Keeps the visibility state in sync with the actual window state.
+     * This is the source of truth for overlay visibility state.
      */
     fun onWindowAdded() {
         _overlayVisible.value = true
@@ -93,7 +105,7 @@ class OverlayManager(private val context: Context) {
 
     /**
      * Called by OverlayService when the window view is removed.
-     * Keeps the visibility state in sync with the actual window state.
+     * This is the source of truth for overlay visibility state.
      */
     fun onWindowRemoved() {
         _overlayVisible.value = false
@@ -156,4 +168,12 @@ fun ComponentActivity.registerOverlayPermissionLauncher(
     return registerForActivityResult(contract) { granted ->
         onResult(granted)
     }
+}
+
+/**
+ * Minimal logging utility to avoid direct android.util.Log dependency in manager.
+ */
+private object LogUtil {
+    fun d(tag: String, msg: String) = android.util.Log.d(tag, msg)
+    fun w(tag: String, msg: String) = android.util.Log.w(tag, msg)
 }
