@@ -145,11 +145,25 @@ class OverlayService : Service() {
                     onCollapse = { _isExpanded.value = false },
                     onExpand = { _isExpanded.value = true },
                     onDrag = { dx, dy ->
-                        val params = composeView?.layoutParams as? LayoutParams
-                        if (params != null) {
-                            params.x += dx.toInt()
-                            params.y += dy.toInt()
-                            windowManager.updateViewLayout(composeView, params)
+                        val view = composeView ?: return@SmartCaptainOverlay
+                        val params = view.layoutParams as? LayoutParams ?: return@SmartCaptainOverlay
+                        try {
+                            // Get display metrics for boundary clamping
+                            val displayMetrics = resources.displayMetrics
+                            val screenWidth = displayMetrics.widthPixels
+                            val screenHeight = displayMetrics.heightPixels
+
+                            // Account for overlay dimensions
+                            val overlayWidth = view.width.coerceAtLeast(1)
+                            val overlayHeight = view.height.coerceAtLeast(1)
+
+                            // Clamp to usable display area
+                            params.x = (params.x + dx.toInt()).coerceIn(0, (screenWidth - overlayWidth).coerceAtLeast(0))
+                            params.y = (params.y + dy.toInt()).coerceIn(0, (screenHeight - overlayHeight).coerceAtLeast(0))
+
+                            windowManager.updateViewLayout(view, params)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to update overlay position", e)
                         }
                     },
                     isExpanded = _isExpanded.value,

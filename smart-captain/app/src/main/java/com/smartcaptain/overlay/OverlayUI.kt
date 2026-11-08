@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import com.smartcaptain.domain.TripDecision
@@ -64,7 +65,7 @@ fun SmartCaptainOverlay(
                 onClose = onClose,
                 onExpand = onExpand,
                 onDrag = onDrag,
-                modifier = Modifier.size(56.dp)
+                modifier = Modifier.wrapContentSize()
             )
         }
     }
@@ -82,25 +83,50 @@ private fun FloatingBubble(
     onDrag: (Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier
-            .background(OverlayTheme.BubbleBackground, CircleShape)
-            .clip(CircleShape)
-            .clickable { onExpand() }
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
-                }
-            },
-        contentAlignment = Alignment.Center
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "S",
-            color = OverlayTheme.BubbleIcon,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // Bubble
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .background(OverlayTheme.BubbleBackground, CircleShape)
+                .clip(CircleShape)
+                .clickable { onExpand() }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.x, dragAmount.y)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "S",
+                color = OverlayTheme.BubbleIcon,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Close button — separate from bubble to avoid triggering drag/expand
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .background(OverlayTheme.ErrorRed.copy(alpha = 0.8f), CircleShape)
+                .clip(CircleShape)
+                .clickable { onClose() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "✕",
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
