@@ -24,9 +24,12 @@ import androidx.compose.ui.unit.sp
 import com.smartcaptain.accessibility.AccessibilityConnectionManager
 import com.smartcaptain.integration.IntegrationStatus
 import com.smartcaptain.integration.TripPipeline
+import com.smartcaptain.map.MapScreen
 import com.smartcaptain.overlay.OverlayManager
 import com.smartcaptain.overlay.OverlayManagerInstance
+import com.smartcaptain.zone.ZoneStore
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.launch
 
 private val Navy = Color(0xFF101B32)
@@ -59,9 +62,20 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
     var overlayPermissionGranted by remember { mutableStateOf(overlayManager.hasOverlayPermission()) }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
 
+    val zoneStore = remember(context) { ZoneStore(context) }
+
     // Observe accessibility connection state as Compose state
     val isAccessibilityConnected by AccessibilityConnectionManager.isConnected
         .collectAsState(initial = false)
+
+    // Observe accessibility enabled state from system settings
+    val isAccessibilityEnabled by AccessibilityConnectionManager.isEnabled
+        .collectAsState(initial = false)
+
+    // Refresh enabled state from system settings when the screen is shown
+    LaunchedEffect(Unit) {
+        AccessibilityConnectionManager.refreshEnabledState(context)
+    }
 
     val overlayPermissionLauncher = rememberLauncherForActivityResult(
         contract = overlayManager.overlayPermissionContract()
@@ -98,6 +112,7 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
                 0 -> Dashboard(
                     automatic = automatic,
                     onMode = { automatic = it },
+                    accessibilityEnabled = isAccessibilityEnabled,
                     accessibilityConnected = isAccessibilityConnected,
                     onOpenAccessibilitySettings = {
                         AccessibilityConnectionManager.openAccessibilitySettings(context)
@@ -120,7 +135,10 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
                     },
                     modifier = Modifier.padding(padding)
                 )
-                2 -> SimplePage("المناطق", "أضف مناطق محظورة أو مفضلة على الخريطة بعد إعداد مزود الخرائط.")
+                2 -> MapScreen(
+                    zoneStore = zoneStore,
+                    modifier = Modifier.padding(padding)
+                )
                 else -> SimplePage("سجل الرحلات", "ستظهر هنا الرحلات التي تم تحليلها ونتائجها.")
             }
 
@@ -142,6 +160,7 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
 private fun Dashboard(
     automatic: Boolean,
     onMode: (Boolean) -> Unit,
+    accessibilityEnabled: Boolean,
     accessibilityConnected: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     modifier: Modifier = Modifier
@@ -176,12 +195,17 @@ private fun Dashboard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("حالة المساعد", color = Color.White.copy(alpha = .75f), modifier = Modifier.weight(1f))
                     Surface(
-                        color = if (accessibilityConnected) Color(0xFF16845B) else Color(0xFF203B60),
+                        color = when {
+                            accessibilityConnected -> Color(0xFF16845B)
+                            accessibilityEnabled -> Color(0xFFB45309)
+                            else -> Color(0xFF203B60)
+                        },
                         shape = RoundedCornerShape(50)
                     ) {
                         Text(
                             text = when {
                                 !integrationStatus.balyDetected -> "بلي غير مكتشف"
+                                !accessibilityEnabled -> "خدمة إمكانية الوصول غير مفعّلة"
                                 !accessibilityConnected -> "الخدمة مفعّلة ولكن غير متصلة"
                                 else -> "الخدمة متصلة"
                             },

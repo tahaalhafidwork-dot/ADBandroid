@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
  * Tracks the actual Accessibility service connection state.
  *
  * Distinguishes between:
- * - Service enabled in Android Settings (user toggled it on)
+ * - Accessibility service enabled in Android Settings (system-wide toggle)
+ * - Smart Captain's accessibility service specifically enabled
  * - Service actually connected and running (system bound to it)
  *
  * The UI must only show "connected" when the service is genuinely bound,
@@ -50,6 +51,47 @@ object AccessibilityConnectionManager {
      * Returns true only when the service is genuinely connected and running.
      */
     fun isServiceConnected(): Boolean = _isConnected.value
+
+    /**
+     * Checks whether the accessibility service is enabled in system settings.
+     */
+    fun isAccessibilityEnabled(context: Context): Boolean {
+        return try {
+            Settings.Secure.getInt(context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Checks whether Smart Captain's accessibility service is specifically enabled.
+     * Compares the enabled services list against this package's service name.
+     */
+    fun isSmartCaptainServiceEnabled(context: Context): Boolean {
+        return try {
+            val enabledServices = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
+            val serviceName = "${context.packageName}/.platform.BalyAccessibilityService"
+            enabledServices.contains(serviceName, ignoreCase = true)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Refreshes the enabled state from system settings.
+     * Call this when the Activity resumes to reflect the current system state.
+     */
+    fun refreshEnabledState(context: Context) {
+        val systemEnabled = isAccessibilityEnabled(context)
+        val serviceEnabled = isSmartCaptainServiceEnabled(context)
+        _isEnabled.value = systemEnabled && serviceEnabled
+        if (!_isEnabled.value) {
+            _isConnected.value = false
+        }
+    }
 
     /**
      * Opens the Android Accessibility settings page so the user can

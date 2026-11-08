@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.IBinder
@@ -89,7 +90,12 @@ class OverlayService : Service() {
 
         // Start as foreground service so the overlay remains visible
         // when Smart Captain is in the background and Baly is in the foreground.
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // On Android 14+ (API 34+, targetSdk=35), startForeground requires a
+        // service type matching android:foregroundServiceType in the manifest,
+        // otherwise IllegalArgumentException is thrown and the app process crashes.
+        // FOREGROUND_SERVICE_TYPE_DATA_SYNC required on API 29+.
+        startForeground(NOTIFICATION_ID, buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
 
         when (action) {
             ACTION_TOGGLE_OVERLAY -> {
