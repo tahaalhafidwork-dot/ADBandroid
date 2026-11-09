@@ -145,23 +145,27 @@ The app remains fully functional on the emulator for all tested zones features. 
 
 ---
 
-## 8. Bottom-Sheet Drag — Directional Snap Behavior (latest build)
+## 8. Bottom-Sheet Drag — Directional Snap Behavior (final fix)
 
-**Problem:** When dragging the saved-zones sheet slightly down, it snapped back up to the half-expanded anchor instead of staying at the bottom.
+**Root cause (why the previous fix failed):** In `onDragEnd` / `onDragCancel`, the code executed `lastDragY = 0f` **before** calling `snapSheet()`. This meant `snapSheet()` always saw `lastDragY == 0`, fell into the `else` branch, and snapped to the nearest visible anchor (often half-expanded) instead of collapsed. Additionally, `toggleSheet()` had inverted logic: when the sheet was half-expanded, clicking the toggle did nothing because the condition compared against `collapsedOffset + 24f` instead of checking whether the sheet was already open.
 
-**Fix:** `snapSheet()` is now direction-aware, tracking `lastDragY`:
-- Dragging **down** (`dragAmount.y > 0`) always settles at the **collapsed** (bottom) anchor — the sheet stays at the bottom and never springs back up on its own.
-- Dragging **up** (`dragAmount.y < 0`) snaps to the nearest anchor **above** the current position (collapsed → half, half → full).
-- Drag is clamped so it cannot be pulled below the collapsed rest position (no off-screen / hidden state).
-- `hiddenOffset` is no longer a drag target; `visibleAnchors` contains only collapsed / half / full.
+**Changes in `MapScreen.kt`:**
+1. `snapSheet()` now accepts a `dragDirection: Float` parameter instead of reading `lastDragY` directly.
+2. `onDragEnd` / `onDragCancel` call `snapSheet(lastDragY)` **before** resetting `lastDragY = 0f`, so the drag direction is preserved for the snap decision.
+3. Drag is clamped to `collapsedOffset` maximum, so the sheet can never be dragged below the bottom rest position (no off-screen / hidden state).
+4. `toggleSheet()` logic corrected: if the sheet is collapsed (`sheetOffset.value >= collapsedOffset - 24f`), expand to half; otherwise collapse.
 
-**Verified on emulator `Medium_Phone_API_37.0`:**
+**Verified on emulator `Medium_Phone_API_37.0` (`emulator-5554`):**
 - half (y≈1045) → drag down → collapses to y≈1396 and **stays** there (does not snap back up) ✅
+- Waited 5 seconds: sheet remained collapsed, no automatic movement ✅
 - collapsed (y≈1396) → drag up → opens half at y≈1045 ✅
-- header toggle button: collapsed ⇄ half ✅
-- collapsed → full long drag up: header y≈281 (full panel) ✅
-- FAB opens the add-zone menu with polygon / freehand / circle options ✅
-- **Note on automation:** `adb shell input swipe` does not reliably trip Compose's touch-slop detector; the drags above were injected with explicit `input motionevent DOWN/MOVE/UP` steps. Real touch input on the device behaves normally.
+- half (y≈1045) → drag up → expands full at y≈281 ✅
+- full (y≈281) → drag down → collapses to y≈1396 ✅
+- Header toggle button: collapsed ⇄ half ✅
+- FAB opens add-zone menu (polygon / freehand / circle) ✅
+- **Screenshots:** `sheet_collapsed.png` (y≈1396), `sheet_half.png` (y≈1045)
+- **Note on automation:** `adb shell input swipe` does not reliably trip Compose's touch-slop detector; drags were injected with explicit `input motionevent DOWN/MOVE/UP` steps. Real touch input behaves normally.
 - **Build / tests / lint:** `assembleDebug` SUCCESS; `testDebugUnitTest` **161/161 passed**; `lintDebug` **0 errors / 15 warnings**.
 - **APK SHA-256:** `EC325831CC67CE77DA1453FB3E32B454F0CA66DE4F60F90334880B0AE29B2977`.
 
+**Files changed:** `app/src/main/java/com/smartcaptain/map/MapScreen.kt` only.
