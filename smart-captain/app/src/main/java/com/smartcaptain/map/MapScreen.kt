@@ -541,10 +541,13 @@ fun MapScreen(
                         expanded = sheetExpanded,
                         onToggle = ::toggleSheet,
                         onDrag = { delta ->
+                            // Animate with zero duration so the sheet follows
+                            // the finger immediately during drag (no bounce).
                             scope.launch {
-                                sheetOffset.snapTo(
+                                sheetOffset.animateTo(
                                     (sheetOffset.value + delta)
-                                        .coerceIn(0f, hiddenOffset)
+                                        .coerceIn(0f, hiddenOffset),
+                                    animationSpec = tween(durationMillis = 0)
                                 )
                             }
                         },
