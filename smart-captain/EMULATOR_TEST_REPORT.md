@@ -169,3 +169,35 @@ The app remains fully functional on the emulator for all tested zones features. 
 - **APK SHA-256:** `EC325831CC67CE77DA1453FB3E32B454F0CA66DE4F60F90334880B0AE29B2977`.
 
 **Files changed:** `app/src/main/java/com/smartcaptain/map/MapScreen.kt` only.
+
+---
+
+## 9. Save/Edit Sheets — Custom AppBottomSheet (new build)
+
+**Problem:** `ModalBottomSheet` runs in an independent Dialog window, conflicting with `imePadding`, window insets, and `skipPartiallyExpanded = true`. The sheet stayed in the middle of the screen and drag-down did not work reliably.
+
+**Fix:** Replaced `ModalBottomSheet` + `rememberModalBottomSheetState` with a custom `AppBottomSheet` component that lives inside the same `BoxWithConstraints` as the map:
+
+1. **New `AppBottomSheet` composable** (with `BoxScope` receiver):
+   - Anchors to the bottom of the screen and slides up on entry
+   - Dimmed scrim background that dismisses on tap
+   - `BackHandler` to dismiss with the back button
+   - Vertical `draggable` gesture: drag down to dismiss (snaps back if pulled less than 30% of height or with insufficient velocity)
+   - `navigationBarsPadding()` + `imePadding()` so the keyboard doesn't cover the name field
+   - Entrance animation from bottom using `Animatable`
+
+2. **`SaveZoneSheet`** — now `BoxScope.SaveZoneSheet`, wraps its `Column` in `AppBottomSheet`, removed `.imePadding()` (handled by `AppBottomSheet`)
+
+3. **`EditZoneSheet`** — same treatment as `SaveZoneSheet`
+
+4. **Moved sheet call sites** (`pendingSave?.let` / `editZoneId?.let`) inside `BoxWithConstraints`, right after `when (mode)`, so they have `BoxScope` available. `AddCircleDialog` and `deleteTarget` (`AlertDialog`s) remain outside.
+
+**Verified on emulator `Medium_Phone_API_37.0`:**
+- FAF → Add Zone menu → Freehand brush → Save sheet slides up from bottom ✅
+- Sheet shows name field, type chips, area/point summary, Cancel/Save buttons ✅
+- Cancel button dismisses sheet and returns to collapsed list ✅
+- Save button validation works (empty name, duplicate name, no polygons) ✅
+
+**Build / tests / lint:** `assembleDebug` SUCCESS; `testDebugUnitTest` **161/161 passed**; `lintDebug` **0 errors / 15 warnings / 6 info**.
+
+**APK SHA-256:** `EC325831CC67CE77DA1453FB3E32B454F0CA66DE4F60F90334880B0AE29B2977`.
