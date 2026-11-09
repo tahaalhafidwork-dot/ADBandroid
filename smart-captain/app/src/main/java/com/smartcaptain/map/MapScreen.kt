@@ -11,6 +11,7 @@ import android.location.LocationManager
 import android.os.Looper
 import android.preference.PreferenceManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -24,16 +25,22 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -85,14 +92,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -108,7 +113,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -753,8 +760,6 @@ fun MapScreen(
 
                 MapMode.IDLE -> Unit
             }
-        }
-    }
 
     pendingSave?.let { pending ->
         SaveZoneSheet(
@@ -794,6 +799,8 @@ fun MapScreen(
             )
         } else {
             editZoneId = null
+        }
+    }
         }
     }
 
@@ -2283,17 +2290,108 @@ private fun BrushToolbar(
 }
 
 // =====================================================================
+// AppBottomSheet – نافذة سفلية مخصصة داخل نفس الشاشة (بدلاً من ModalBottomSheet)
+// =====================================================================
+
+@Composable
+private fun BoxScope.AppBottomSheet(
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val offset = remember { Animatable(0f) }
+    var heightPx by remember { mutableStateOf(0f) }
+    var entered by remember { mutableStateOf(false) }
+
+    fun dismiss() {
+        scope.launch {
+            offset.animateTo(heightPx, tween(200))
+            onDismiss()
+        }
+    }
+
+    // دخول من الأسفل بعد قياس الارتفاع
+    LaunchedEffect(heightPx) {
+        if (heightPx > 0f && !entered) {
+            offset.snapTo(heightPx)
+            entered = true
+            offset.animateTo(0f, tween(260))
+        }
+    }
+
+    BackHandler { dismiss() }
+
+    // الخلفية المعتمة
+    val scrimAlpha = if (heightPx > 0f) {
+        0.45f * (1f - (offset.value / heightPx).coerceIn(0f, 1f))
+    } else 0f
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(Color.Black.copy(alpha = scrimAlpha))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { dismiss() }
+    )
+
+    val dragState = rememberDraggableState { delta ->
+        scope.launch {
+            offset.snapTo((offset.value + delta).coerceAtLeast(0f))
+        }
+    }
+
+    Surface(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .onSizeChanged { heightPx = it.height.toFloat() }
+            .offset { IntOffset(0, offset.value.roundToInt()) }
+            .graphicsLayer { alpha = if (entered) 1f else 0f }
+            .draggable(
+                state = dragState,
+                orientation = Orientation.Vertical,
+                onDragStopped = { velocity ->
+                    if (offset.value > heightPx * 0.3f || velocity > 1200f) {
+                        offset.animateTo(heightPx, tween(180))
+                        onDismiss()
+                    } else {
+                        offset.animateTo(0f, tween(200))
+                    }
+                }
+            ),
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        color = ZoneDesign.Surface,
+        shadowElevation = 16.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .imePadding(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 8.dp)
+                    .size(width = 44.dp, height = 4.dp)
+                    .background(ZoneDesign.Outline, RoundedCornerShape(2.dp))
+            )
+            content()
+        }
+    }
+}
+
+// =====================================================================
 // Save / edit sheets
 // =====================================================================
 
 @Composable
-private fun SaveZoneSheet(
+private fun BoxScope.SaveZoneSheet(
     pending: PendingSave,
     zones: List<Zone>,
     onDismiss: () -> Unit,
     onSave: (String, ZoneType) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember {
         mutableStateOf(pending.existingZone?.name ?: "منطقة ${zones.size + 1}")
     }
@@ -2305,16 +2403,12 @@ private fun SaveZoneSheet(
             .toSet()
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
+    AppBottomSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp)
-                .imePadding()
         ) {
             Text(
                 text = if (pending.existingZone == null) "حفظ المنطقة" else "تحديث المنطقة",
@@ -2415,7 +2509,7 @@ private fun SaveZoneSheet(
 }
 
 @Composable
-private fun EditZoneSheet(
+private fun BoxScope.EditZoneSheet(
     zone: Zone,
     zones: List<Zone>,
     onDismiss: () -> Unit,
@@ -2423,7 +2517,6 @@ private fun EditZoneSheet(
     onEditShape: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember(zone.id) { mutableStateOf(zone.name) }
     var type by remember(zone.id) { mutableStateOf(zone.type) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -2431,16 +2524,12 @@ private fun EditZoneSheet(
         zones.filter { it.id != zone.id }.map { it.name.trim() }.toSet()
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
+    AppBottomSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp)
-                .imePadding()
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
