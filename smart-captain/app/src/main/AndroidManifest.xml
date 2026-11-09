@@ -11,6 +11,7 @@
 
     <application
         android:label="Smart Captain"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="true">
 
