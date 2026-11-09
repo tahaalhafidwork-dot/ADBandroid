@@ -42,21 +42,15 @@ object ZoneDesign {
     fun colorFor(type: ZoneType): Color = when (type) {
         ZoneType.DANGER -> Danger
         ZoneType.FAVORITE -> Success
-        ZoneType.NEUTRAL -> Blue
-        ZoneType.NONE -> Muted
     }
 
     fun softColorFor(type: ZoneType): Color = when (type) {
         ZoneType.DANGER -> DangerSoft
         ZoneType.FAVORITE -> SuccessSoft
-        ZoneType.NEUTRAL -> BlueSoft
-        ZoneType.NONE -> Color(0xFFF2F2F2)
     }
 
     fun labelFor(type: ZoneType): String = when (type) {
         ZoneType.DANGER -> "منطقة خطرة"
         ZoneType.FAVORITE -> "منطقة مفضلة"
-        ZoneType.NEUTRAL -> "منطقة عادية"
-        ZoneType.NONE -> "غير محدد"
     }
 }

@@ -641,7 +641,7 @@ fun MapScreen(
                                 strokes = emptyList(),
                                 areaSqMeters = BrushGeometry.ringAreaSqMeters(drawingPoints),
                                 pointCount = drawingPoints.size,
-                                defaultType = ZoneType.NONE
+                                defaultType = ZoneType.FAVORITE
                             )
                         }
                     }
@@ -704,7 +704,7 @@ fun MapScreen(
                                 strokes = brush.strokes,
                                 areaSqMeters = brushResult.areaSqMeters,
                                 pointCount = brushResult.pointCount,
-                                defaultType = existing?.type ?: ZoneType.NONE
+                                defaultType = existing?.type ?: ZoneType.FAVORITE
                             )
                         }
                     },
@@ -1683,8 +1683,6 @@ private fun ZoneCard(
                     imageVector = when (zone.type) {
                         ZoneType.DANGER -> Icons.Default.Warning
                         ZoneType.FAVORITE -> Icons.Default.Star
-                        ZoneType.NEUTRAL -> Icons.Default.Place
-                        ZoneType.NONE -> Icons.Default.Place
                     },
                     contentDescription = null,
                     tint = typeColor,
@@ -1818,8 +1816,6 @@ private fun ZoneInfoCard(
                         imageVector = when (zone.type) {
                             ZoneType.DANGER -> Icons.Default.Warning
                             ZoneType.FAVORITE -> Icons.Default.Star
-                            ZoneType.NEUTRAL -> Icons.Default.Place
-                            ZoneType.NONE -> Icons.Default.Place
                         },
                         contentDescription = null,
                         tint = ZoneDesign.colorFor(zone.type),
@@ -2429,8 +2425,6 @@ private fun EditZoneSheet(
                         imageVector = when (zone.type) {
                             ZoneType.DANGER -> Icons.Default.Warning
                             ZoneType.FAVORITE -> Icons.Default.Star
-                            ZoneType.NEUTRAL -> Icons.Default.Place
-                            ZoneType.NONE -> Icons.Default.Place
                         },
                         contentDescription = null,
                         tint = ZoneDesign.colorFor(zone.type)
@@ -2553,7 +2547,7 @@ private fun AddCircleDialog(
         mutableStateOf(initialLongitude?.toString() ?: "46.6753")
     }
     var radius by remember { mutableStateOf("500") }
-    var type by remember { mutableStateOf(ZoneType.NONE) }
+    var type by remember { mutableStateOf(ZoneType.FAVORITE) }
     var error by remember { mutableStateOf<String?>(null) }
     val existingNames = remember(zones) { zones.map { it.name.trim() }.toSet() }
 
