@@ -138,25 +138,30 @@ The full Zones redesign was built, unit-tested, linted, installed, and executed 
 - Build: **SUCCESSFUL**
 - Unit tests: **161 / 161 PASSED**
 - Lint: **0 errors / 15 warnings**
-- APK: **`app/build/outputs/apk/debug/app-debug.apk`** — SHA-256 `4d9ee0820a68e0629eeb90218c6f535df326a9bf85dc8ec88e04462865b32b88`
+- APK: **`app/build/outputs/apk/debug/app-debug.apk`** — SHA-256 `EC325831CC67CE77DA1453FB3E32B454F0CA66DE4F60F90334880B0AE29B2977`
 - Runtime on emulator: **NO CRASHES**, all tested flows behaved correctly (brush stamp area, drag area, undo, save, persistence after relaunch).
 
 The app remains fully functional on the emulator for all tested zones features. Accessibility-dependent features (floating window) and GPS-based flows were outside the emulator scope and should be validated on a physical device if required.
 
 ---
 
-## 8. Bottom-Sheet Drag Fix — Verification (latest build)
+## 8. Bottom-Sheet Drag — Directional Snap Behavior (latest build)
 
-- **Fix:** drag handling moved to the whole sheet surface via `detectDragGestures`; `dragAmount` is now applied directly (it is already an incremental delta), so finger motion and sheet motion stay 1:1.
-- **Snap behavior:** the sheet rests only on visible anchors (collapsed / half / full). Dragging far down can never leave it hidden off-screen — it always snaps back to `collapsed`.
-- **Verified on emulator `Medium_Phone_API_37.0`:**
-  - collapsed → half drag up: header `y≈1396` → `y≈1045` ✅
-  - half → collapsed drag down: `y≈1045` → `y≈1396` ✅
-  - collapsed → full long drag up: header `y≈281` (full panel) ✅
-  - full → long drag down: snaps to `collapsed` and stays visible ✅
-  - header toggle button: collapsed ⇄ half ✅
-  - FAB opens the add-zone menu with polygon / freehand / circle options ✅
+**Problem:** When dragging the saved-zones sheet slightly down, it snapped back up to the half-expanded anchor instead of staying at the bottom.
+
+**Fix:** `snapSheet()` is now direction-aware, tracking `lastDragY`:
+- Dragging **down** (`dragAmount.y > 0`) always settles at the **collapsed** (bottom) anchor — the sheet stays at the bottom and never springs back up on its own.
+- Dragging **up** (`dragAmount.y < 0`) snaps to the nearest anchor **above** the current position (collapsed → half, half → full).
+- Drag is clamped so it cannot be pulled below the collapsed rest position (no off-screen / hidden state).
+- `hiddenOffset` is no longer a drag target; `visibleAnchors` contains only collapsed / half / full.
+
+**Verified on emulator `Medium_Phone_API_37.0`:**
+- half (y≈1045) → drag down → collapses to y≈1396 and **stays** there (does not snap back up) ✅
+- collapsed (y≈1396) → drag up → opens half at y≈1045 ✅
+- header toggle button: collapsed ⇄ half ✅
+- collapsed → full long drag up: header y≈281 (full panel) ✅
+- FAB opens the add-zone menu with polygon / freehand / circle options ✅
 - **Note on automation:** `adb shell input swipe` does not reliably trip Compose's touch-slop detector; the drags above were injected with explicit `input motionevent DOWN/MOVE/UP` steps. Real touch input on the device behaves normally.
 - **Build / tests / lint:** `assembleDebug` SUCCESS; `testDebugUnitTest` **161/161 passed**; `lintDebug` **0 errors / 15 warnings**.
-- **APK SHA-256:** `3536f518380a8437fb707807e790e0cf3c1a91a16e7f8f4fa2594f18d8244d74`.
+- **APK SHA-256:** `EC325831CC67CE77DA1453FB3E32B454F0CA66DE4F60F90334880B0AE29B2977`.
 

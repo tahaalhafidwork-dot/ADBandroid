@@ -350,6 +350,11 @@ fun MapScreen(
             }
             val safeGapPx = with(density) { 16.dp.toPx() }
 
+            // Direction of the last drag gesture (+1 = down, -1 = up). Used by
+            // snapSheet() so that dragging down always settles at the bottom
+            // (collapsed) anchor instead of snapping back up to a higher anchor.
+            var lastDragY by remember { mutableStateOf(0f) }
+
             LaunchedEffect(editing) {
                 // Animate to target when editing state changes
                 val target = if (editing) hiddenOffset else collapsedOffset
@@ -359,8 +364,20 @@ fun MapScreen(
             }
 
             fun snapSheet() {
-                val target = visibleAnchors.minByOrNull { abs(it - sheetOffset.value) }
-                    ?: collapsedOffset
+                val target = when {
+                    // Dragging down always settles at the bottom (collapsed) anchor,
+                    // so the sheet never springs back up on its own.
+                    lastDragY > 0 -> collapsedOffset
+                    // Dragging up: snap to the nearest anchor above the current
+                    // position, so the user can open half / full only by pulling up.
+                    lastDragY < 0 -> {
+                        val upper = visibleAnchors.filter { it < sheetOffset.value }
+                        upper.minByOrNull { abs(it - sheetOffset.value) } ?: collapsedOffset
+                    }
+                    // No directional hint (programmatic / toggle): nearest anchor.
+                    else -> visibleAnchors.minByOrNull { abs(it - sheetOffset.value) }
+                        ?: collapsedOffset
+                }
                 // Animate to nearest anchor
                 val anim = Animatable(sheetOffset.value)
                 scope.launch {
@@ -542,13 +559,23 @@ fun MapScreen(
                     )
                     .pointerInput(Unit) {
                         detectDragGestures(
+                            onDragStart = { lastDragY = 0f },
                             onDrag = { _, dragAmount ->
+                                lastDragY = dragAmount.y
                                 // dragAmount is the delta since the previous event.
+                                // Coerce to collapsedOffset max so the sheet can
+                                // never be dragged below the bottom rest position.
                                 sheetOffset.value = (sheetOffset.value + dragAmount.y)
-                                    .coerceIn(0f, hiddenOffset)
+                                    .coerceIn(0f, collapsedOffset)
                             },
-                            onDragEnd = { snapSheet() },
-                            onDragCancel = { snapSheet() }
+                            onDragEnd = {
+                                lastDragY = 0f
+                                snapSheet()
+                            },
+                            onDragCancel = {
+                                lastDragY = 0f
+                                snapSheet()
+                            }
                         )
                     },
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
