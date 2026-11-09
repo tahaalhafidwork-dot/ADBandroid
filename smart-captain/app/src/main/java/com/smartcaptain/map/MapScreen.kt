@@ -363,14 +363,14 @@ fun MapScreen(
                 anim.animateTo(target, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
             }
 
-            fun snapSheet() {
+            fun snapSheet(dragDirection: Float) {
                 val target = when {
                     // Dragging down always settles at the bottom (collapsed) anchor,
                     // so the sheet never springs back up on its own.
-                    lastDragY > 0 -> collapsedOffset
+                    dragDirection > 0 -> collapsedOffset
                     // Dragging up: snap to the nearest anchor above the current
                     // position, so the user can open half / full only by pulling up.
-                    lastDragY < 0 -> {
+                    dragDirection < 0 -> {
                         val upper = visibleAnchors.filter { it < sheetOffset.value }
                         upper.minByOrNull { abs(it - sheetOffset.value) } ?: collapsedOffset
                     }
@@ -386,10 +386,12 @@ fun MapScreen(
             }
 
             fun toggleSheet() {
-                val target = if (sheetOffset.value > collapsedOffset + 24f) {
-                    collapsedOffset
-                } else {
+                val target = if (sheetOffset.value >= collapsedOffset - 24f) {
+                    // Sheet is collapsed (or near it): expand to half.
                     halfOffset
+                } else {
+                    // Sheet is half/full expanded: collapse it.
+                    collapsedOffset
                 }
                 val anim = Animatable(sheetOffset.value)
                 scope.launch {
@@ -569,12 +571,15 @@ fun MapScreen(
                                     .coerceIn(0f, collapsedOffset)
                             },
                             onDragEnd = {
+                                // Pass the captured direction to snapSheet() BEFORE
+                                // resetting lastDragY, otherwise snapSheet() always
+                                // sees 0 and snaps to the nearest anchor (often half).
+                                snapSheet(lastDragY)
                                 lastDragY = 0f
-                                snapSheet()
                             },
                             onDragCancel = {
+                                snapSheet(lastDragY)
                                 lastDragY = 0f
-                                snapSheet()
                             }
                         )
                     },
