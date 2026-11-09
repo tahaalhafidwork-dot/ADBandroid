@@ -329,7 +329,7 @@ fun MapScreen(
             val fullOffset = heightPx * 0.02f
             val hiddenOffset = sheetHeightPx
             val anchors = remember(heightPx) {
-                listOf(collapsedOffset, halfOffset, fullOffset)
+                listOf(fullOffset, halfOffset, collapsedOffset, hiddenOffset)
             }
             val sheetOffset = remember { Animatable(collapsedOffset) }
             val sheetHeightDp = with(density) { sheetHeightPx.toDp() }
