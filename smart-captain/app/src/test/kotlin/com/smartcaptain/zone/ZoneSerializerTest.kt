@@ -75,7 +75,7 @@ class ZoneSerializerTest {
             centerLatitude = 0.0,
             centerLongitude = 0.0,
             radiusMeters = 100.0,
-            type = ZoneType.NEUTRAL,
+            type = ZoneType.FAVORITE,
             color = 0xFF000000.toInt(),
             createdAt = 0L
         )
@@ -146,6 +146,18 @@ class ZoneSerializerTest {
     }
 
     @Test
+    fun testDeserializeLegacyTypeOrdinals_mapToFavorite() {
+        // Older builds stored NEUTRAL (2) and NONE (3) ordinals. They must
+        // deserialize as FAVORITE after the type model was reduced.
+        listOf("2", "3").forEach { ordinal ->
+            val pipeData = "old-zone|منطقة قديمة|33.3152|44.3661|500.0|$ordinal|8388536|1000000"
+            val zone = ZoneSerializer.deserialize(pipeData)
+            assertNotNull("ordinal=$ordinal should deserialize", zone)
+            assertEquals("ordinal=$ordinal", ZoneType.FAVORITE, zone!!.type)
+        }
+    }
+
+    @Test
     fun testSerializeThenDeserializeRoundtrip() {
         val original = Zone(
             id = "rt-1",
@@ -159,7 +171,7 @@ class ZoneSerializerTest {
                 LatLng(33.3200, 44.3700),
                 LatLng(33.3100, 44.3750)
             ),
-            type = ZoneType.NEUTRAL,
+            type = ZoneType.FAVORITE,
             color = 0xFF315FE8.toInt(),
             createdAt = 1234567890L
         )

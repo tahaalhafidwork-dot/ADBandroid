@@ -26,7 +26,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -350,8 +350,6 @@ fun MapScreen(
             }
             val safeGapPx = with(density) { 16.dp.toPx() }
 
-            var previousDrag by remember { mutableStateOf(0f) }
-
             LaunchedEffect(editing) {
                 // Animate to target when editing state changes
                 val target = if (editing) hiddenOffset else collapsedOffset
@@ -537,33 +535,27 @@ fun MapScreen(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(sheetHeightDp)
-                    .offset { IntOffset(0, sheetOffset.value.roundToInt()) },
+                    .offset { IntOffset(0, sheetOffset.value.roundToInt()) }
+                    .background(
+                        Color.Transparent,
+                        RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                    )
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDrag = { _, dragAmount ->
+                                // dragAmount is the delta since the previous event.
+                                sheetOffset.value = (sheetOffset.value + dragAmount.y)
+                                    .coerceIn(0f, hiddenOffset)
+                            },
+                            onDragEnd = { snapSheet() },
+                            onDragCancel = { snapSheet() }
+                        )
+                    },
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = ZoneDesign.Surface,
                 shadowElevation = 18.dp
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onVerticalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    val delta = dragAmount - previousDrag
-                                    previousDrag = dragAmount
-                                    sheetOffset.value = (sheetOffset.value + delta).coerceIn(0f, hiddenOffset)
-                                },
-                                onDragEnd = {
-                                    previousDrag = 0f
-                                    snapSheet()
-                                },
-                                onDragCancel = {
-                                    previousDrag = 0f
-                                    snapSheet()
-                                }
-                            )
-                        },
-                ) {
+                Column(modifier = Modifier.fillMaxSize()) {
                     SheetHeader(
                         zoneCount = zones.size,
                         activeCount = zones.count { it.isActive },

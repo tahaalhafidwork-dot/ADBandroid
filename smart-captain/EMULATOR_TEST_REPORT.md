@@ -142,3 +142,21 @@ The full Zones redesign was built, unit-tested, linted, installed, and executed 
 - Runtime on emulator: **NO CRASHES**, all tested flows behaved correctly (brush stamp area, drag area, undo, save, persistence after relaunch).
 
 The app remains fully functional on the emulator for all tested zones features. Accessibility-dependent features (floating window) and GPS-based flows were outside the emulator scope and should be validated on a physical device if required.
+
+---
+
+## 8. Bottom-Sheet Drag Fix — Verification (latest build)
+
+- **Fix:** drag handling moved to the whole sheet surface via `detectDragGestures`; `dragAmount` is now applied directly (it is already an incremental delta), so finger motion and sheet motion stay 1:1.
+- **Snap behavior:** the sheet rests only on visible anchors (collapsed / half / full). Dragging far down can never leave it hidden off-screen — it always snaps back to `collapsed`.
+- **Verified on emulator `Medium_Phone_API_37.0`:**
+  - collapsed → half drag up: header `y≈1396` → `y≈1045` ✅
+  - half → collapsed drag down: `y≈1045` → `y≈1396` ✅
+  - collapsed → full long drag up: header `y≈281` (full panel) ✅
+  - full → long drag down: snaps to `collapsed` and stays visible ✅
+  - header toggle button: collapsed ⇄ half ✅
+  - FAB opens the add-zone menu with polygon / freehand / circle options ✅
+- **Note on automation:** `adb shell input swipe` does not reliably trip Compose's touch-slop detector; the drags above were injected with explicit `input motionevent DOWN/MOVE/UP` steps. Real touch input on the device behaves normally.
+- **Build / tests / lint:** `assembleDebug` SUCCESS; `testDebugUnitTest` **161/161 passed**; `lintDebug` **0 errors / 15 warnings**.
+- **APK SHA-256:** `3536f518380a8437fb707807e790e0cf3c1a91a16e7f8f4fa2594f18d8244d74`.
+

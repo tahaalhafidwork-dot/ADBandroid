@@ -360,6 +360,7 @@ object ZoneSerializer {
         val parts = data.split("|")
         if (parts.size != 8) return null
         return try {
+            val typeOrdinal = parts[5].toInt()
             Zone(
                 id = parts[0],
                 name = parts[1],
@@ -368,7 +369,12 @@ object ZoneSerializer {
                 centerLongitude = parts[3].toDouble(),
                 radiusMeters = parts[4].toDouble(),
                 polygonPoints = emptyList(),
-                type = ZoneType.values()[parts[5].toInt()],
+                // Backward compatibility: older builds stored NEUTRAL (2) and
+                // NONE (3). Treat any unknown ordinal as FAVORITE.
+                type = when (typeOrdinal) {
+                    0 -> ZoneType.DANGER
+                    else -> ZoneType.FAVORITE
+                },
                 color = parts[6].toInt(),
                 createdAt = parts[7].toLong()
             )

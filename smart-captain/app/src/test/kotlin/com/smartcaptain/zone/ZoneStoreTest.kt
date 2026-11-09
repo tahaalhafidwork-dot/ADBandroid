@@ -153,7 +153,7 @@ class ZoneStoreTest {
             centerLatitude = 33.3152,
             centerLongitude = 44.3661,
             radiusMeters = 500.0,
-            type = ZoneType.NEUTRAL
+            type = ZoneType.FAVORITE
         )
         store.saveZone(zone)
         val retrieved = store.getZone("special")

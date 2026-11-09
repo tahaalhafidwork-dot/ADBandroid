@@ -183,25 +183,41 @@ class OverlayService : Service() {
                         val view = composeView ?: return@SmartCaptainOverlay
                         val params = view.layoutParams as? LayoutParams ?: return@SmartCaptainOverlay
                         try {
-                            // Accumulate fractional drag amounts for precision
-                            accumulatedDragX += dx
-                            accumulatedDragY += dy
+                            // Calculate new position from current WindowManager params + drag delta.
+                            // Using params.x/y directly (instead of a separate accumulator) eliminates
+                            // any drift between accumulated values and the actual window position.
+                            val newX = params.x + dx.toInt()
+                            val newY = params.y + dy.toInt()
 
                             // Get display metrics for boundary clamping
                             val displayMetrics = resources.displayMetrics
                             val screenWidth = displayMetrics.widthPixels
                             val screenHeight = displayMetrics.heightPixels
 
-                            // Account for overlay dimensions
+                            // Use current view dimensions for accurate clamping.
+                            // WRAP_CONTENT views may change size between bubble and panel states.
                             val overlayWidth = view.width.coerceAtLeast(1)
                             val overlayHeight = view.height.coerceAtLeast(1)
 
-                            // Clamp accumulated position to usable display area
+                            // Clamp to screen bounds
                             val maxX = (screenWidth - overlayWidth).coerceAtLeast(0)
                             val maxY = (screenHeight - overlayHeight).coerceAtLeast(0)
 
-                            params.x = accumulatedDragX.toInt().coerceIn(0, maxX)
-                            params.y = accumulatedDragY.toInt().coerceIn(0, maxY)
+                            params.x = newX.coerceIn(0, maxX)
+                            params.y = newY.coerceIn(0, maxY)
+
+                            // Snap-to-edge: if dragging within 50px of any edge, snap to it.
+                            // This keeps the bubble at the bottom when the user drags it there,
+                            // instead of bouncing back up on touch release.
+                            val snapThreshold = 50
+                            if (params.y > maxY - snapThreshold) params.y = maxY
+                            if (params.y < snapThreshold) params.y = 0
+                            if (params.x > maxX - snapThreshold) params.x = maxX
+                            if (params.x < snapThreshold) params.x = 0
+
+                            // Keep accumulators in sync with clamped position
+                            accumulatedDragX = params.x.toFloat()
+                            accumulatedDragY = params.y.toFloat()
 
                             windowManager.updateViewLayout(view, params)
                         } catch (e: Exception) {
