@@ -38,7 +38,7 @@ data class ZonePolygon(
 enum class ZoneShape { CIRCLE, POLYGON }
 
 /** Zone type for classification and visual styling. */
-enum class ZoneType { DANGER, FAVORITE, NEUTRAL }
+enum class ZoneType { DANGER, FAVORITE, NEUTRAL, NONE }
 
 /**
  * A geographic zone with a center point, radius, and optional polygon boundary.
@@ -57,7 +57,7 @@ data class Zone(
     val centerLongitude: Double = 0.0,
     val radiusMeters: Double = 0.0,
     val polygonPoints: List<LatLng> = emptyList(),
-    val type: ZoneType = ZoneType.NEUTRAL,
+    val type: ZoneType = ZoneType.NONE,
     val color: Int = 0xFF315FE8.toInt(),
     val createdAt: Long = System.currentTimeMillis(),
     /** Holes of [polygonPoints] (produced by the brush eraser). */
@@ -129,6 +129,7 @@ data class Zone(
         ZoneType.DANGER -> "منطقة خطرة"
         ZoneType.FAVORITE -> "منطقة مفضلة"
         ZoneType.NEUTRAL -> "منطقة"
+        ZoneType.NONE -> "غير محدد"
     }
 }
 
@@ -331,6 +332,7 @@ object ZoneSerializer {
             0 -> ZoneType.DANGER
             1 -> ZoneType.FAVORITE
             2 -> ZoneType.NEUTRAL
+            3 -> ZoneType.NONE
             else -> return null
         }
 
