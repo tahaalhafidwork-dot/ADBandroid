@@ -27,6 +27,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.DraggableState
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -567,13 +568,13 @@ fun MapScreen(
                         RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                     )
                     .pointerInput(Unit) {
+                        var previousDrag = 0f
                         detectDragGestures(
-                            onDragStart = { lastDragY = 0f },
-                            onDrag = { _, dragAmount ->
-                                lastDragY = dragAmount.y
+                            onDragStart = { previousDrag = 0f },
+                            onDrag = { change, dragAmount ->
+                                change.consume() // Prevent LazyColumn from swallowing touch events
                                 // dragAmount is the delta since the previous event.
-                                // Coerce to collapsedOffset max so the sheet can
-                                // never be dragged below the bottom rest position.
+                                lastDragY = dragAmount.y
                                 sheetOffset.value = (sheetOffset.value + dragAmount.y)
                                     .coerceIn(0f, collapsedOffset)
                             },
@@ -583,10 +584,12 @@ fun MapScreen(
                                 // sees 0 and snaps to the nearest anchor (often half).
                                 snapSheet(lastDragY)
                                 lastDragY = 0f
+                                previousDrag = 0f
                             },
                             onDragCancel = {
                                 snapSheet(lastDragY)
                                 lastDragY = 0f
+                                previousDrag = 0f
                             }
                         )
                     },
