@@ -1933,13 +1933,18 @@ private fun AddZoneFab(
         }
         FloatingActionButton(
             onClick = onToggle,
-            containerColor = ZoneDesign.Blue,
+            containerColor = ZoneDesign.Navy,
             contentColor = Color.White,
-            shape = CircleShape
+            shape = CircleShape,
+            modifier = Modifier
+                .size(60.dp)
+                .padding(4.dp)
         ) {
             Icon(
                 imageVector = if (expanded) Icons.Default.Close else Icons.Default.Add,
-                contentDescription = if (expanded) "إغلاق قائمة الإضافة" else "إضافة منطقة"
+                contentDescription = if (expanded) "إغلاق قائمة إضافة منطقة" else "إضافة منطقة جديدة",
+                tint = Color.White,
+                modifier = Modifier.size(28.dp)
             )
         }
     }
