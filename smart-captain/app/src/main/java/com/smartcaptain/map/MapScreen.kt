@@ -328,10 +328,12 @@ fun MapScreen(
             val halfOffset = heightPx * 0.39f
             val fullOffset = heightPx * 0.02f
             val hiddenOffset = sheetHeightPx
-            val anchors = remember(heightPx) {
-                listOf(fullOffset, halfOffset, collapsedOffset, hiddenOffset)
+            // Visible anchors only (hiddenOffset reserved for drag gesture, not a rest position)
+            val visibleAnchors = remember(heightPx) {
+                listOf(fullOffset, halfOffset, collapsedOffset)
             }
-            val sheetOffset = remember { Animatable(collapsedOffset) }
+            // Use mutableStateOf for instant drag tracking, Animatable only for settle animation
+            val sheetOffset = remember { mutableStateOf(collapsedOffset) }
             val sheetHeightDp = with(density) { sheetHeightPx.toDp() }
             val sheetExpanded by remember {
                 derivedStateOf { sheetOffset.value < halfOffset }
@@ -348,18 +350,23 @@ fun MapScreen(
             }
             val safeGapPx = with(density) { 16.dp.toPx() }
 
+            var previousDrag by remember { mutableStateOf(0f) }
+
             LaunchedEffect(editing) {
-                sheetOffset.animateTo(
-                    targetValue = if (editing) hiddenOffset else collapsedOffset,
-                    animationSpec = tween(durationMillis = 260)
-                )
+                // Animate to target when editing state changes
+                val target = if (editing) hiddenOffset else collapsedOffset
+                // Use a temporary Animatable for one-shot animation
+                val anim = Animatable(sheetOffset.value)
+                anim.animateTo(target, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
             }
 
             fun snapSheet() {
-                val target = anchors.minByOrNull { abs(it - sheetOffset.value) }
+                val target = visibleAnchors.minByOrNull { abs(it - sheetOffset.value) }
                     ?: collapsedOffset
+                // Animate to nearest anchor
+                val anim = Animatable(sheetOffset.value)
                 scope.launch {
-                    sheetOffset.animateTo(target, animationSpec = tween(260))
+                    anim.animateTo(target, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
                 }
             }
 
@@ -369,8 +376,9 @@ fun MapScreen(
                 } else {
                     halfOffset
                 }
+                val anim = Animatable(sheetOffset.value)
                 scope.launch {
-                    sheetOffset.animateTo(target, animationSpec = tween(260))
+                    anim.animateTo(target, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
                 }
             }
 
@@ -534,35 +542,42 @@ fun MapScreen(
                 color = ZoneDesign.Surface,
                 shadowElevation = 18.dp
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val delta = dragAmount - previousDrag
+                                    previousDrag = dragAmount
+                                    sheetOffset.value = (sheetOffset.value + delta).coerceIn(0f, hiddenOffset)
+                                },
+                                onDragEnd = {
+                                    previousDrag = 0f
+                                    snapSheet()
+                                },
+                                onDragCancel = {
+                                    previousDrag = 0f
+                                    snapSheet()
+                                }
+                            )
+                        },
+                ) {
                     SheetHeader(
                         zoneCount = zones.size,
                         activeCount = zones.count { it.isActive },
                         expanded = sheetExpanded,
                         onToggle = ::toggleSheet,
-                        onDrag = { delta ->
-                            // Animate with zero duration so the sheet follows
-                            // the finger immediately during drag (no bounce).
-                            scope.launch {
-                                sheetOffset.animateTo(
-                                    (sheetOffset.value + delta)
-                                        .coerceIn(0f, hiddenOffset),
-                                    animationSpec = tween(durationMillis = 0)
-                                )
-                            }
-                        },
-                        onDragEnd = ::snapSheet
                     )
                     HorizontalDivider(color = ZoneDesign.Outline)
                     if (zones.isEmpty()) {
                         EmptyZones(
                             onAdd = {
                                 showAddMenu = true
+                                val anim = Animatable(sheetOffset.value)
                                 scope.launch {
-                                    sheetOffset.animateTo(
-                                        collapsedOffset,
-                                        animationSpec = tween(260)
-                                    )
+                                    anim.animateTo(collapsedOffset, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
                                 }
                             }
                         )
@@ -584,11 +599,9 @@ fun MapScreen(
                                     onOpen = {
                                         focus(zone)
                                         if (sheetMostlyVisible) {
+                                            val anim = Animatable(sheetOffset.value)
                                             scope.launch {
-                                                sheetOffset.animateTo(
-                                                    collapsedOffset,
-                                                    animationSpec = tween(260)
-                                                )
+                                                anim.animateTo(collapsedOffset, animationSpec = tween(260)).also { sheetOffset.value = anim.value }
                                             }
                                         }
                                     },
@@ -1536,22 +1549,10 @@ private fun SheetHeader(
     activeCount: Int,
     expanded: Boolean,
     onToggle: () -> Unit,
-    onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        onDrag(dragAmount)
-                    },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() }
-                )
-            }
             .padding(top = 8.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
