@@ -19,6 +19,17 @@ import android.view.WindowManager.LayoutParams
 import androidx.core.app.NotificationCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.smartcaptain.domain.DriverSettings
 import com.smartcaptain.domain.TripEvaluation
 import com.smartcaptain.domain.VehicleSettings
@@ -57,6 +68,14 @@ class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var composeView: ComposeView? = null
     private var windowViewAdded = false
+
+    /**
+     * ComposeView added directly to WindowManager is not attached to any Activity,
+     * so it has no ViewTreeLifecycleOwner. Without one Compose throws
+     * "ViewTreeLifecycleOwner not found" and the process crashes right after the
+     * bubble is added. This owner supplies a RESUMED lifecycle for the overlay.
+     */
+    private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
 
     // Accumulated drag offsets for precise positioning (avoids truncation per event)
     private var accumulatedDragX = 0f
@@ -148,7 +167,13 @@ class OverlayService : Service() {
 
         // Initialize Compose UI and add to window on the main thread
         try {
-            composeView = ComposeView(this@OverlayService)
+            val lifecycleOwner = OverlayLifecycleOwner()
+            overlayLifecycleOwner = lifecycleOwner
+            composeView = ComposeView(this@OverlayService).apply {
+                setViewTreeLifecycleOwner(lifecycleOwner)
+                setViewTreeViewModelStoreOwner(lifecycleOwner)
+                setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+            }
             composeView?.setContent {
                 SmartCaptainOverlay(
                     onClose = { stopOverlay() },
@@ -218,6 +243,8 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay view", e)
             composeView = null
+            overlayLifecycleOwner?.destroy()
+            overlayLifecycleOwner = null
             pipelineListenerRegistration?.invoke()
             pipelineListenerRegistration = null
             throw e
@@ -241,6 +268,8 @@ class OverlayService : Service() {
         } finally {
             composeView = null
             windowViewAdded = false
+            overlayLifecycleOwner?.destroy()
+            overlayLifecycleOwner = null
             // Reset accumulated drag offsets
             accumulatedDragX = 0f
             accumulatedDragY = 0f
@@ -340,4 +369,32 @@ object OverlayManagerInstance {
     }
 
     fun get(): OverlayManager? = instance
+}
+
+/**
+ * Minimal Lifecycle/ViewModel/SavedState owner for a ComposeView hosted directly
+ * in WindowManager by a Service (no Activity in the view tree).
+ *
+ * Starts RESUMED so Compose can create its recomposer, and is destroyed when the
+ * overlay window is removed.
+ */
+private class OverlayLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val viewModelStore: ViewModelStore = ViewModelStore()
+    override val savedStateRegistry: SavedStateRegistry
+        get() = savedStateRegistryController.savedStateRegistry
+
+    init {
+        savedStateRegistryController.performRestore(null)
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+    }
+
+    fun destroy() {
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        viewModelStore.clear()
+    }
 }

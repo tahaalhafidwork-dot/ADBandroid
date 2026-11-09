@@ -9,6 +9,31 @@ data class LatLng(val latitude: Double, val longitude: Double) {
         latitude in -90.0..90.0 && longitude in -180.0..180.0
 }
 
+/**
+ * One freehand-brush action.
+ *
+ * [points] is the finger path, [radiusMeters] is the real-world brush radius at
+ * the time of drawing, and [erase] marks an eraser pass instead of paint.
+ * Keeping the path (rather than only the final polygon) allows the zone to be
+ * re-opened and edited later, and lets the geometry layer rebuild the union.
+ */
+data class BrushStroke(
+    val points: List<LatLng>,
+    val radiusMeters: Double,
+    val erase: Boolean = false
+)
+
+/**
+ * One closed polygon plus its holes. Brush zones can produce several disjoint
+ * polygons (for example when the user paints two separate streets), so the
+ * data model keeps a primary polygon for backward compatibility and any
+ * additional parts in [Zone.extraPolygons].
+ */
+data class ZonePolygon(
+    val exterior: List<LatLng>,
+    val holes: List<List<LatLng>> = emptyList()
+)
+
 /** The shape of a zone: circle (center + radius) or polygon (boundary points). */
 enum class ZoneShape { CIRCLE, POLYGON }
 
@@ -34,7 +59,18 @@ data class Zone(
     val polygonPoints: List<LatLng> = emptyList(),
     val type: ZoneType = ZoneType.NEUTRAL,
     val color: Int = 0xFF315FE8.toInt(),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Holes of [polygonPoints] (produced by the brush eraser). */
+    val polygonHoles: List<List<LatLng>> = emptyList(),
+    /** Additional disjoint polygon parts (freehand brush only). */
+    val extraPolygons: List<ZonePolygon> = emptyList(),
+    /**
+     * The raw freehand strokes that produced this zone. Keeping them lets the
+     * brush editor re-open the drawing exactly as it was painted.
+     */
+    val brushStrokes: List<BrushStroke> = emptyList(),
+    /** Whether the zone actively blocks the area. */
+    val isActive: Boolean = true
 ) {
 
     /** Returns true if this zone's data is valid. */
@@ -48,11 +84,29 @@ data class Zone(
                     radiusMeters > 0.0
             }
             ZoneShape.POLYGON -> {
-                // Polygon needs at least 3 valid points
+                // Polygon needs at least 3 distinct valid points
                 if (polygonPoints.size < 3) return false
-                polygonPoints.all { it.isValid() }
+                if (!polygonPoints.all { it.isValid() }) return false
+                polygonPoints.distinct().size >= 3
             }
         }
+    }
+
+    /** True when this polygon was produced by the freehand brush. */
+    fun isBrushZone(): Boolean = brushStrokes.isNotEmpty()
+
+    /**
+     * All polygon parts, primary first. The primary exterior is kept in
+     * [polygonPoints] so existing code and stored data remain compatible.
+     */
+    fun polygons(): List<ZonePolygon> {
+        if (zoneShape != ZoneShape.POLYGON) return emptyList()
+        val result = mutableListOf<ZonePolygon>()
+        if (polygonPoints.isNotEmpty()) {
+            result.add(ZonePolygon(polygonPoints, polygonHoles))
+        }
+        result.addAll(extraPolygons)
+        return result
     }
 
     /** Returns the representative center point (for circles: center; for polygons: centroid). */
@@ -118,6 +172,81 @@ object ZoneSerializer {
             .replace("\\t", "\t")
     }
 
+    // ---------------------------------------------------------------------
+    // Compact encoding for the optional brush geometry fields.
+    //
+    // The project deliberately avoids a JSON dependency, so the extra fields
+    // are stored as simple delimited strings:
+    //   point  = "lat,lon"
+    //   ring   = "point;point;..."
+    //   rings  = "ring|ring|..."
+    //   part   = "exterior~hole~hole"
+    //   stroke = "radius,erase:point;point;..."
+    // ---------------------------------------------------------------------
+
+    private fun encodeRing(ring: List<LatLng>): String =
+        ring.joinToString(";") { "${it.latitude},${it.longitude}" }
+
+    private fun decodeRing(data: String): List<LatLng> {
+        if (data.isBlank()) return emptyList()
+        return data.split(";").mapNotNull { token ->
+            val parts = token.split(",")
+            if (parts.size != 2) return@mapNotNull null
+            val lat = parts[0].toDoubleOrNull() ?: return@mapNotNull null
+            val lon = parts[1].toDoubleOrNull() ?: return@mapNotNull null
+            LatLng(lat, lon).takeIf { it.isValid() }
+        }
+    }
+
+    private fun encodeRings(rings: List<List<LatLng>>): String =
+        rings.filter { it.size >= 3 }.joinToString("|") { encodeRing(it) }
+
+    private fun decodeRings(data: String?): List<List<LatLng>> {
+        if (data.isNullOrBlank()) return emptyList()
+        return data.split("|").map { decodeRing(it) }.filter { it.size >= 3 }
+    }
+
+    private fun encodeParts(parts: List<ZonePolygon>): String =
+        parts.filter { it.exterior.size >= 3 }.joinToString("|") { part ->
+            buildString {
+                append(encodeRing(part.exterior))
+                part.holes.filter { it.size >= 3 }.forEach { hole ->
+                    append("~")
+                    append(encodeRing(hole))
+                }
+            }
+        }
+
+    private fun decodeParts(data: String?): List<ZonePolygon> {
+        if (data.isNullOrBlank()) return emptyList()
+        return data.split("|").mapNotNull { encoded ->
+            val rings = encoded.split("~").map { decodeRing(it) }
+            val exterior = rings.firstOrNull() ?: return@mapNotNull null
+            if (exterior.size < 3) return@mapNotNull null
+            ZonePolygon(exterior, rings.drop(1).filter { it.size >= 3 })
+        }
+    }
+
+    private fun encodeStrokes(strokes: List<BrushStroke>): String =
+        strokes.filter { it.points.isNotEmpty() }.joinToString("|") { stroke ->
+            "${stroke.radiusMeters},${if (stroke.erase) 1 else 0}:${encodeRing(stroke.points)}"
+        }
+
+    private fun decodeStrokes(data: String?): List<BrushStroke> {
+        if (data.isNullOrBlank()) return emptyList()
+        return data.split("|").mapNotNull { encoded ->
+            val separator = encoded.indexOf(':')
+            if (separator <= 0) return@mapNotNull null
+            val header = encoded.substring(0, separator).split(",")
+            if (header.size != 2) return@mapNotNull null
+            val radius = header[0].toDoubleOrNull() ?: return@mapNotNull null
+            val erase = header[1] == "1"
+            val points = decodeRing(encoded.substring(separator + 1))
+            if (points.isEmpty() || radius <= 0.0) return@mapNotNull null
+            BrushStroke(points, radius, erase)
+        }
+    }
+
     fun serialize(zone: Zone): String {
         val sb = StringBuilder()
         sb.append("{")
@@ -134,6 +263,10 @@ object ZoneSerializer {
         sb.append("\"pts\":[")
         sb.append(zone.polygonPoints.map { p -> "[${p.latitude},${p.longitude}]" }.joinToString(","))
         sb.append("]")
+        sb.append(",\"act\":${if (zone.isActive) 1 else 0}")
+        sb.append(",\"holes\":\"${encodeRings(zone.polygonHoles)}\"")
+        sb.append(",\"parts\":\"${encodeParts(zone.extraPolygons)}\"")
+        sb.append(",\"strk\":\"${encodeStrokes(zone.brushStrokes)}\"")
         sb.append("}")
         return sb.toString()
     }
@@ -213,7 +346,11 @@ object ZoneSerializer {
             polygonPoints = points,
             type = type,
             color = color,
-            createdAt = createdAt
+            createdAt = createdAt,
+            polygonHoles = decodeRings(getStr("holes")),
+            extraPolygons = decodeParts(getStr("parts")),
+            brushStrokes = decodeStrokes(getStr("strk")),
+            isActive = (getInt("act") ?: 1) == 1
         )
     }
 

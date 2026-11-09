@@ -5,13 +5,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowApplication
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [34])
 class ZoneStoreTest {
 
     private lateinit var context: Context
@@ -19,7 +18,7 @@ class ZoneStoreTest {
 
     @Before
     fun setUp() {
-        context = Robolectric.setupActivity(android.app.Activity::class.java).applicationContext
+        context = RuntimeEnvironment.getApplication()
         store = ZoneStore(context)
         store.deleteAllZones()
     }
@@ -149,7 +148,7 @@ class ZoneStoreTest {
     fun testSpecialCharactersInName_survivesRoundtrip() {
         val zone = Zone(
             id = "special",
-            name = "منطقة \"م especiais\" | أنابيب",
+            name = "منطقة \"م especiales\" | أنابيب",
             zoneShape = ZoneShape.CIRCLE,
             centerLatitude = 33.3152,
             centerLongitude = 44.3661,
@@ -178,5 +177,42 @@ class ZoneStoreTest {
         assertNotNull(retrieved)
         assertEquals("الإصدار 2", retrieved!!.name)
         assertEquals(200.0, retrieved.radiusMeters, 0.001)
+    }
+
+    @Test
+    fun testEditedPolygonGeometry_persists() {
+        val original = Zone(
+            id = "geo",
+            name = "هندسة",
+            zoneShape = ZoneShape.POLYGON,
+            polygonPoints = listOf(
+                LatLng(33.3152, 44.3661),
+                LatLng(33.3200, 44.3700),
+                LatLng(33.3100, 44.3750)
+            ),
+            type = ZoneType.DANGER,
+            color = 0xFF112233.toInt(),
+            createdAt = 777L
+        )
+        store.saveZone(original)
+
+        val moved = original.copy(
+            polygonPoints = listOf(
+                LatLng(33.3000, 44.3000),
+                LatLng(33.3200, 44.3700),
+                LatLng(33.3100, 44.3750)
+            )
+        )
+        store.saveZone(moved)
+
+        val loaded = store.getZone("geo")
+        assertNotNull(loaded)
+        assertEquals(original.id, loaded!!.id)
+        assertEquals(original.name, loaded.name)
+        assertEquals(original.type, loaded.type)
+        assertEquals(original.color, loaded.color)
+        assertEquals(original.createdAt, loaded.createdAt)
+        assertEquals(33.3000, loaded.polygonPoints[0].latitude, 0.0001)
+        assertEquals(44.3000, loaded.polygonPoints[0].longitude, 0.0001)
     }
 }

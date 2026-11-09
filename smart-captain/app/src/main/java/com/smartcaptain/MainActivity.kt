@@ -29,7 +29,10 @@ import com.smartcaptain.overlay.OverlayManager
 import com.smartcaptain.overlay.OverlayManagerInstance
 import com.smartcaptain.zone.ZoneStore
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
 
 private val Navy = Color(0xFF101B32)
@@ -75,6 +78,22 @@ private fun SmartCaptainApp(overlayManager: OverlayManager) {
     // Refresh enabled state from system settings when the screen is shown
     LaunchedEffect(Unit) {
         AccessibilityConnectionManager.refreshEnabledState(context)
+    }
+
+    // Re-check accessibility state whenever the activity resumes (e.g. when the
+    // user returns from the system Accessibility settings page after toggling
+    // the service on/off). Without this the UI stays stuck on "غير مفعّلة".
+    val activity = LocalContext.current as? ComponentActivity
+    DisposableEffect(activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                AccessibilityConnectionManager.refreshEnabledState(context)
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose {
+            activity?.lifecycle?.removeObserver(observer)
+        }
     }
 
     val overlayPermissionLauncher = rememberLauncherForActivityResult(

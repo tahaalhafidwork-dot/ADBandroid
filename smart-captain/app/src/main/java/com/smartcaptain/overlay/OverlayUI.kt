@@ -100,6 +100,8 @@ private fun FloatingBubble(
                         change.consume()
                         onDrag(dragAmount.x, dragAmount.y)
                     }
+                }
+                .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { onExpand() }
                     )

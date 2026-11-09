@@ -73,8 +73,16 @@ object AccessibilityConnectionManager {
                 context.contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             ) ?: ""
-            val serviceName = "${context.packageName}/.platform.BalyAccessibilityService"
-            enabledServices.contains(serviceName, ignoreCase = true)
+            // The system stores the fully qualified component
+            // (com.smartcaptain/com.smartcaptain.platform.BalyAccessibilityService).
+            // Checking only the abbreviated form (com.smartcaptain/.platform...) never
+            // matches, so the UI would stay stuck on "not enabled". Accept both forms.
+            val component = android.content.ComponentName(
+                context,
+                com.smartcaptain.platform.BalyAccessibilityService::class.java
+            )
+            enabledServices.contains(component.flattenToString(), ignoreCase = true) ||
+                enabledServices.contains(component.flattenToShortString(), ignoreCase = true)
         } catch (e: Exception) {
             false
         }

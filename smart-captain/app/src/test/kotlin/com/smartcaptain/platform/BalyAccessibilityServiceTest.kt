@@ -1,86 +1,82 @@
 package com.smartcaptain.platform
 
-import com.smartcaptain.domain.TripOffer
+import android.view.accessibility.AccessibilityEvent
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.*
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import android.view.accessibility.AccessibilityEvent
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class BalyAccessibilityServiceTest {
 
-    private val service = BalyAccessibilityService()
+    private lateinit var service: BalyAccessibilityService
 
     @Before
     fun setup() {
+        service = Robolectric.buildService(BalyAccessibilityService::class.java).get()
         service.resetState()
+    }
+
+    private fun event(packageName: String?, text: List<String>?): AccessibilityEvent {
+        val event = mock(AccessibilityEvent::class.java)
+        `when`(event.eventType).thenReturn(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+        `when`(event.packageName).thenReturn(packageName)
+        `when`(event.text).thenReturn(text)
+        return event
     }
 
     @Test
     fun testOnAccessibilityEvent_nullPackage() {
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn(null)
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(event(null, listOf("سعر الرحلة 5000 دينار")))
     }
 
     @Test
     fun testOnAccessibilityEvent_nonBalyPackage() {
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn("com.other.app")
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(event("com.other.app", listOf("سعر الرحلة 5000 دينار")))
     }
 
     @Test
     fun testOnAccessibilityEvent_wrongPackage_comBalyCaptain() {
         // The old wrong package name should NOT be supported
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn("com.baly.captain")
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(event("com.baly.captain", listOf("سعر الرحلة 5000 دينار")))
     }
 
     @Test
     fun testOnAccessibilityEvent_balyPackage_noText() {
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn("app.baly.driver")
-        `when`(event.text).thenReturn(null)
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(event("app.baly.driver", null))
     }
 
     @Test
     fun testOnAccessibilityEvent_balyPackage_withText_noTrip() {
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn("app.baly.driver")
-        `when`(event.text).thenReturn(listOf("الرصيد: 22,250 دينار"))
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(event("app.baly.driver", listOf("الرصيد: 22,250 دينار")))
     }
 
     @Test
     fun testOnAccessibilityEvent_balyPackage_withTripText() {
-        val event = mock(AccessibilityEvent::class.java)
-        `when`(event.packageName).thenReturn("app.baly.driver")
-        `when`(event.text).thenReturn(listOf("سعر الرحلة 5000 دينار مسافة 2 كم مدة الرحلة 10 دقيقة"))
-        service.onAccessibilityEvent(event)
+        service.onAccessibilityEvent(
+            event(
+                "app.baly.driver",
+                listOf("سعر الرحلة 5000 دينار مسافة 2 كم مدة الرحلة 10 دقيقة")
+            )
+        )
     }
 
     @Test
     fun testResetState() {
-        val event1 = mock(AccessibilityEvent::class.java)
-        service.onAccessibilityEvent(event1)
+        service.onAccessibilityEvent(event("app.baly.driver", listOf("سعر الرحلة 5000 دينار")))
         service.resetState()
-        val event2 = mock(AccessibilityEvent::class.java)
-        `when`(event2.packageName).thenReturn("app.baly.driver")
-        `when`(event2.text).thenReturn(listOf("سعر الرحلة 5000 دينار"))
-        service.onAccessibilityEvent(event2)
+        service.onAccessibilityEvent(event("app.baly.driver", listOf("سعر الرحلة 5000 دينار")))
     }
 
     @Test
     fun testProcessedEventIds_tracking() {
-        val event1 = mock(AccessibilityEvent::class.java)
-        service.onAccessibilityEvent(event1)
-        assertNotNull(service::processedEventIds)
+        service.onAccessibilityEvent(event("app.baly.driver", listOf("سعر الرحلة 5000 دينار")))
+        assertNotNull(service.processedEventIds)
     }
 
     @Test

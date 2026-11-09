@@ -1,18 +1,17 @@
 package com.smartcaptain.overlay
 
 import android.content.Context
-import android.content.Intent
 import android.provider.Settings
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowApplication
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [34])
 class OverlayManagerTest {
 
     private lateinit var context: Context
@@ -20,9 +19,7 @@ class OverlayManagerTest {
 
     @Before
     fun setUp() {
-        context = org.robolectric.Robolectric.setupActivity(
-            android.app.Activity::class.java
-        ).applicationContext
+        context = RuntimeEnvironment.getApplication()
         manager = OverlayManager(context)
     }
 

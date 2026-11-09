@@ -1,23 +1,21 @@
-<resources>
-    <!-- Baly Accessibility Service Configuration -->
-    <!-- 
-      Configures the accessibility service for reading Baly Captain interface.
-      - canRetrieveWindowContent: Allows reading window content (text)
-      - packageNames: Restricts service to only listen to Baly Captain package (VERIFIED: app.baly.driver)
-      - accessibilityEventTypes: All event types to detect trip offer screens
-      - notificationTimeout: 100ms
-    -->
-    <accessibilityservice xmlns:android="http://schemas.android.com/apk/res/android"
-        android:canRetrieveWindowContent="true"
-        android:packageNames="app.baly.driver"
-        android:accessibilityEventTypes="typeAllMask"
-        android:notificationTimeout="100"
-        android:description="@string/accessibility_service_description">
-        <!-- 
-          Added features for Baly integration:
-          - Retrieving window content essential for OCR/text extraction
-          - Package restriction to Baly Captain only
-          - All event types to detect trip offer screens
-        -->
-    </accessibilityservice>
-</resources>
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Baly Accessibility Service Configuration.
+
+  IMPORTANT: the root element MUST be <accessibility-service>. If it is wrapped
+  in <resources>, AccessibilityManagerService logs
+  "Meta-data does not start with accessibility-service tag" and silently drops
+  the service, so it never appears in the system accessibility settings.
+
+  - canRetrieveWindowContent: allows reading window content (text)
+  - packageNames: restrict listening to the Baly Captain package (app.baly.driver)
+  - accessibilityEventTypes: all events, to detect trip offer screens
+  - notificationTimeout: 100ms
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:packageNames="app.baly.driver" />
